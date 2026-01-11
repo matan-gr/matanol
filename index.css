@@ -1,0 +1,129 @@
+
+:root {
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-bg: rgba(15, 23, 42, 0.75);
+  --glass-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+}
+
+html.dark body {
+  color: #f1f5f9; /* Slate 100 */
+  background-color: #020617; /* Slate 950 */
+}
+
+html:not(.dark) body {
+  color: #334155; /* Slate 700 */
+  background-color: #f8fafc; /* Slate 50 */
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  /* Enable tabular numbers for better data alignment and cv11 for cleaner '1's */
+  font-feature-settings: 'tnum' on, 'cv11' on, 'ss01' on; 
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+  margin: 0;
+}
+
+/* Text Selection */
+::selection {
+  background: rgba(124, 58, 237, 0.3); /* Violet tint */
+  color: inherit;
+}
+
+/* Dynamic Background Mesh - Dark Mode */
+html.dark .bg-mesh {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: -1;
+  background: 
+    radial-gradient(circle at 15% 50%, rgba(76, 29, 149, 0.12), transparent 40%),
+    radial-gradient(circle at 85% 30%, rgba(37, 99, 235, 0.1), transparent 40%);
+  filter: blur(80px);
+  opacity: 1;
+  pointer-events: none;
+}
+
+/* Dynamic Background Mesh - Light Mode */
+html:not(.dark) .bg-mesh {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: -1;
+  background: 
+    radial-gradient(circle at 5% 10%, rgba(238, 242, 255, 1), transparent 40%),
+    radial-gradient(circle at 90% 80%, rgba(245, 243, 255, 1), transparent 40%);
+  opacity: 1;
+  pointer-events: none;
+}
+
+.glass-panel {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+html.dark .glass-panel {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.15);
+}
+
+html:not(.dark) .glass-panel {
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(203, 213, 225, 0.6); /* Slate 300 */
+  box-shadow: 0 4px 6px -1px rgba(226, 232, 240, 0.6), 0 2px 4px -1px rgba(226, 232, 240, 0.3);
+}
+
+/* Refined Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent; 
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3); 
+  border-radius: 99px;
+  border: 3px solid transparent; 
+  background-clip: content-box;
+  transition: background-color 0.2s;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.6); 
+  background-clip: content-box;
+}
+
+/* Utility for hiding scrollbar but keeping functionality */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+
+/* Smooth Table Row Transitions */
+tr {
+  transition-property: background-color, border-color, box-shadow;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+
+/* Animations */
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.animate-spin-slow {
+  animation: spin-slow 8s linear infinite;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}

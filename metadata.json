@@ -1,0 +1,5 @@
+{
+  "name": "Matan-O-Labeler",
+  "description": "Enterprise-grade GCP resource governance tool powered by Gemini. Automates resource discovery, intelligent labeling, and compliance reporting.",
+  "requestFramePermissions": []
+}
