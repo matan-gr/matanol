@@ -19,7 +19,7 @@ export interface AppSettings {
   departmentList: string[];
 }
 
-export type ResourceType = 'INSTANCE' | 'DISK' | 'SNAPSHOT' | 'IMAGE' | 'CLOUD_RUN' | 'CLOUD_SQL';
+export type ResourceType = 'INSTANCE' | 'DISK' | 'SNAPSHOT' | 'IMAGE' | 'CLOUD_RUN' | 'CLOUD_SQL' | 'BUCKET';
 export type ProvisioningModel = 'STANDARD' | 'SPOT' | 'RESERVED';
 
 export interface LabelHistoryEntry {
@@ -61,6 +61,8 @@ export interface GceResource {
   ips?: ResourceIP[];
   url?: string; // For Cloud Run
   databaseVersion?: string; // For Cloud SQL
+  storageClass?: string; // For Buckets
+  family?: string; // For Images
 
   labels: Record<string, string>;
   labelFingerprint: string;

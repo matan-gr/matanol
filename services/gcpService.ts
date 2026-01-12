@@ -4,6 +4,7 @@ import { GceResource, ResourceType, ProvisioningModel, LogEntry, QuotaEntry } fr
 const BASE_URL = 'https://compute.googleapis.com/compute/v1/projects';
 const RUN_BASE_URL = 'https://run.googleapis.com/v2/projects';
 const SQL_ADMIN_URL = 'https://sqladmin.googleapis.com/sql/v1beta4/projects';
+const STORAGE_BASE_URL = 'https://storage.googleapis.com/storage/v1/b';
 const LOGGING_URL = 'https://logging.googleapis.com/v2/entries:list';
 
 // --- Resilience Utilities ---
@@ -60,7 +61,7 @@ const fetchWithBackoff = async (
     }
 
     if (retries > 0) {
-      console.warn(`Request failed (${response.status}). Retrying in ${backoff}ms...`);
+      // Exponential backoff wait
       await new Promise(resolve => setTimeout(resolve, backoff));
       return fetchWithBackoff(url, finalOptions, retries - 1, backoff * 2);
     }
@@ -68,7 +69,6 @@ const fetchWithBackoff = async (
     return response;
   } catch (error) {
     if (retries > 0) {
-      console.warn(`Network error. Retrying in ${backoff}ms...`, error);
       await new Promise(resolve => setTimeout(resolve, backoff));
       return fetchWithBackoff(url, finalOptions, retries - 1, backoff * 2);
     }
@@ -156,10 +156,12 @@ const fetchGlobalResourceList = async (
       });
 
       if (!response.ok) {
-        if (response.status === 403) {
-            console.warn(`Access denied for ${resourcePath}, returning empty list.`);
+        // Standardize handling: 403/404 on global resources often means API disabled or not used
+        if (response.status === 403 || response.status === 404) {
             return [];
         }
+        if (response.status === 401) throw new Error("Authentication Failed (401)");
+        
         const errorMessage = await parseGcpError(response);
         throw new Error(errorMessage);
       }
@@ -179,7 +181,7 @@ const fetchGlobalResourceList = async (
     } while (nextPageToken);
   } catch (error: any) {
     if (error.message && error.message.includes('401')) throw error;
-    console.warn(`Fetch warning for ${resourcePath}:`, error);
+    // Suppress noise for optional resources
     return [];
   }
   return resources;
@@ -200,7 +202,7 @@ const fetchAvailableRegions = async (projectId: string, accessToken: string): Pr
       return data.items.map((i: any) => i.name);
     }
   } catch (e) {
-    console.warn("Failed to discover regions, using defaults", e);
+    // Silent fail fallback
   }
   return ['us-central1', 'us-east1', 'europe-west1', 'asia-northeast1'];
 };
@@ -222,7 +224,6 @@ const fetchCloudRunServices = async (
       });
 
       if (!response.ok) {
-        // 403/404 on specific region is fine, likely API not enabled in that region or region restricted
         if (response.status === 401) throw new Error("401"); 
         return; 
       }
@@ -247,7 +248,6 @@ const fetchCloudRunServices = async (
       }
     } catch (e: any) {
       if (e.message === '401') throw new Error("Authentication Failed (401)");
-      // Silent fail for regions without Cloud Run enabled
     }
   }));
 
@@ -267,7 +267,6 @@ const fetchCloudSqlInstances = async (
 
     if (!response.ok) {
       if (response.status === 401) throw new Error("401");
-      console.warn('Cloud SQL API access failed or not enabled.');
       return [];
     }
 
@@ -282,14 +281,14 @@ const fetchCloudSqlInstances = async (
         })).filter((i: any) => i.internal || i.external) || [];
 
         resources.push({
-          id: instance.name, // SQL instances are project-unique by name
+          id: instance.name, 
           name: instance.name,
           type: 'CLOUD_SQL',
           zone: zone,
           machineType: instance.settings?.tier || 'db-custom',
           databaseVersion: instance.databaseVersion,
           status: instance.state || 'UNKNOWN',
-          creationTimestamp: instance.createTime || new Date().toISOString(), // Fallback if missing
+          creationTimestamp: instance.createTime || new Date().toISOString(),
           provisioningModel: 'STANDARD',
           labels: instance.settings?.userLabels || {},
           labelFingerprint: instance.etag || '',
@@ -300,10 +299,52 @@ const fetchCloudSqlInstances = async (
     }
   } catch (error: any) {
     if (error.message === '401') throw error;
-    console.warn("Failed to fetch Cloud SQL instances:", error);
   }
   return resources;
 };
+
+const fetchBuckets = async (
+  projectId: string,
+  accessToken: string
+): Promise<GceResource[]> => {
+  const resources: GceResource[] = [];
+  try {
+    const url = `${STORAGE_BASE_URL}?project=${projectId}`;
+    const response = await fetchWithBackoff(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) throw new Error("401");
+      return [];
+    }
+
+    const data = await response.json();
+    if (data.items && Array.isArray(data.items)) {
+      data.items.forEach((bucket: any) => {
+        // Map location to a region/zone format if possible, otherwise keep as is
+        const location = bucket.location.toLowerCase();
+        
+        resources.push({
+          id: bucket.id,
+          name: bucket.name,
+          type: 'BUCKET',
+          zone: location,
+          storageClass: bucket.storageClass,
+          status: 'READY',
+          creationTimestamp: bucket.timeCreated,
+          provisioningModel: 'STANDARD',
+          labels: bucket.labels || {},
+          labelFingerprint: bucket.etag || '',
+          history: []
+        });
+      });
+    }
+  } catch (error: any) {
+    if (error.message === '401') throw error;
+  }
+  return resources;
+}
 
 export const fetchAllResources = async (
   projectId: string,
@@ -365,7 +406,7 @@ export const fetchAllResources = async (
   );
 
   // 3. Images
-  const imageFields = `items(id,name,diskSizeGb,status,creationTimestamp,labels,labelFingerprint),nextPageToken`;
+  const imageFields = `items(id,name,diskSizeGb,family,status,creationTimestamp,labels,labelFingerprint),nextPageToken`;
   const imagesPromise = fetchGlobalResourceList(
     projectId, accessToken, 'images', imageFields,
     (img) => ({
@@ -374,6 +415,7 @@ export const fetchAllResources = async (
       type: 'IMAGE',
       zone: 'global',
       sizeGb: img.diskSizeGb,
+      family: img.family,
       status: img.status || 'READY',
       creationTimestamp: img.creationTimestamp,
       provisioningModel: 'STANDARD',
@@ -408,9 +450,12 @@ export const fetchAllResources = async (
   // 6. Cloud SQL
   const cloudSqlPromise = fetchCloudSqlInstances(projectId, accessToken);
 
+  // 7. Buckets
+  const bucketsPromise = fetchBuckets(projectId, accessToken);
+
   // Execute all, but catch individual errors to identify 401s vs partial failures
   const results = await Promise.allSettled([
-    instancesPromise, disksPromise, imagesPromise, snapshotsPromise, cloudRunPromise, cloudSqlPromise
+    instancesPromise, disksPromise, imagesPromise, snapshotsPromise, cloudRunPromise, cloudSqlPromise, bucketsPromise
   ]);
 
   const resources: GceResource[] = [];
@@ -436,8 +481,7 @@ export const fetchAllResources = async (
       throw errors[0];
     }
     
-    // Partial failure logging
-    console.warn("Partial inventory loading failure:", errors.map(e => e.message));
+    // Partial failure logic handled silently or via specific toast in UI layer
   }
   
   return resources;
@@ -472,6 +516,20 @@ export const updateResourceLabels = async (
     url = `${SQL_ADMIN_URL}/${projectId}/instances/${resource.name}`;
     method = 'PATCH';
     body = { settings: { userLabels: newLabels } };
+  } else if (resource.type === 'BUCKET') {
+    url = `${STORAGE_BASE_URL}/${resource.name}`;
+    method = 'PATCH';
+    
+    // Calculate Diff for GCS (to support unsetting)
+    // Keys present in current labels but missing in newLabels should be set to null
+    const finalLabelsForGcs: Record<string, string | null> = { ...newLabels };
+    Object.keys(resource.labels).forEach(key => {
+      if (!newLabels.hasOwnProperty(key)) {
+        finalLabelsForGcs[key] = null;
+      }
+    });
+    
+    body = { labels: finalLabelsForGcs };
   } else {
     throw new Error(`Updating labels for type ${resource.type} not supported yet.`);
   }
@@ -507,7 +565,7 @@ export const fetchGcpAuditLogs = async (
       },
       body: JSON.stringify({
         resourceNames: [`projects/${projectId}`],
-        filter: `protoPayload.serviceName=("compute.googleapis.com" OR "run.googleapis.com" OR "cloudsql.googleapis.com") AND logName:"projects/${projectId}/logs/cloudaudit.googleapis.com%2Factivity"`,
+        filter: `protoPayload.serviceName=("compute.googleapis.com" OR "run.googleapis.com" OR "cloudsql.googleapis.com" OR "storage.googleapis.com") AND logName:"projects/${projectId}/logs/cloudaudit.googleapis.com%2Factivity"`,
         orderBy: 'timestamp desc',
         pageSize
       })
@@ -515,7 +573,6 @@ export const fetchGcpAuditLogs = async (
 
     if (!response.ok) {
         if (response.status === 401) throw new Error("Authentication Failed (401): Session expired.");
-        console.warn('Failed to fetch GCP logs', response.statusText);
         return [];
     }
 
@@ -529,7 +586,6 @@ export const fetchGcpAuditLogs = async (
       const resourceName = payload.resourceName?.split('/').pop() || 'Unknown Resource';
       let severity = e.severity || 'INFO';
       
-      // Extraction of Rich Data
       const callerIp = payload.requestMetadata?.callerIp;
       const userAgent = payload.requestMetadata?.callerSuppliedUserAgent;
       const status = payload.status ? { code: payload.status.code, message: payload.status.message } : undefined;
@@ -561,7 +617,6 @@ export const fetchQuotas = async (
   projectId: string,
   accessToken: string
 ): Promise<QuotaEntry[]> => {
-  // Fetch Compute Engine Quotas (Aggregated by Region)
   const fetchComputeQuotas = async () => {
     try {
       const url = `${BASE_URL}/${projectId}/regions`;
@@ -593,15 +648,11 @@ export const fetchQuotas = async (
       });
       return computeQuotas;
     } catch (e) {
-      console.error("Compute Quota Fetch Failed", e);
       return [];
     }
   };
 
-  // Mock secondary quota source (e.g. Cloud SQL or Global Service Quotas)
-  // In a real app, this would call Service Usage API or specific Cloud SQL limits
   const fetchDatabaseQuotas = async () => {
-     // Simulating an async fetch for DB quotas in parallel
      await new Promise(resolve => setTimeout(resolve, 500)); 
      return [
        { metric: 'CLOUD_SQL_CPU_REGION', limit: 100, usage: 85, region: 'us-central1', percentage: 85 },
@@ -610,7 +661,6 @@ export const fetchQuotas = async (
   };
 
   try {
-    // Parallel Execution of distinct quota sources
     const [compute, database] = await Promise.all([
        fetchComputeQuotas(),
        fetchDatabaseQuotas()
@@ -618,7 +668,6 @@ export const fetchQuotas = async (
 
     return [...compute, ...database].sort((a, b) => b.percentage - a.percentage);
   } catch (e) {
-    console.error("Quota fetch failed:", e);
     return [];
   }
 };

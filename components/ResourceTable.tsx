@@ -1,15 +1,17 @@
 
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { GceResource, FilterConfig } from '../types';
 import { 
-  CheckSquare, Square, Search, FilterX, RefreshCw
+  CheckSquare, Square, Search, FilterX, ChevronDown, ChevronRight, Layers, Tag,
+  Server, Cloud, Box
 } from 'lucide-react';
 import { Button, Card } from './DesignSystem';
 import { ResourceRow } from './ResourceRow';
 import { ResourceFilters, BulkActionBar, PaginationControl, AuditHistoryModal } from './TableControls';
 import { LabelingStudio } from './LabelingStudio';
-import { useResourceFilter, filterResources } from '../hooks/useResourceFilter';
+import { useResourceFilter, calculateFacetedCounts } from '../hooks/useResourceFilter';
 import { TableRowSkeleton } from './Skeletons';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface ResourceTableProps {
   resources: GceResource[];
@@ -19,11 +21,15 @@ interface ResourceTableProps {
   onApplyLabels: (id: string, labels: Record<string, string>) => void;
   onUpdateLabels: (id: string, labels: Record<string, string>) => void;
   onRevert: (id: string) => void;
-  // Changed signature to accept a Map for efficient diverse bulk updates
   onBulkUpdateLabels?: (updates: Map<string, Record<string, string>>) => void;
   onRefresh?: () => void;
   isLoading?: boolean;
 }
+
+// Helper type for display items (either a group header or a resource row)
+type DisplayItem = 
+  | { type: 'header'; key: string; label: string; count: number; isCollapsed: boolean }
+  | { type: 'resource'; data: GceResource };
 
 export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({ 
   resources, 
@@ -40,11 +46,9 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
   // --- Hooks & State ---
   const { 
     filteredResources, 
-    paginatedResources, 
-    totalPages, 
     itemsPerPage, 
-    currentPage, 
-    startIndex, 
+    currentPage: defaultCurrentPage, 
+    startIndex: defaultStartIndex, 
     availableZones, 
     availableMachineTypes,
     setCurrentPage, 
@@ -55,28 +59,87 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [historyResource, setHistoryResource] = useState<GceResource | null>(null);
   const [isLabelingStudioOpen, setIsLabelingStudioOpen] = useState(false);
+  
+  // Grouping State
+  const [groupByLabel, setGroupByLabel] = useState<string>('');
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
-  // --- Faceted Counts Calculation ---
+  // Derive available labels for Group By dropdown
+  const availableLabelKeys = useMemo(() => {
+    const keys = new Set<string>();
+    resources.forEach(r => Object.keys(r.labels).forEach(k => keys.add(k)));
+    return Array.from(keys).sort();
+  }, [resources]);
+
+  // --- Optimized Faceted Counts ---
   const counts = useMemo(() => {
-    const statusResources = filterResources(resources, filterConfig, 'statuses');
-    const typeResources = filterResources(resources, filterConfig, 'types');
-    const zoneResources = filterResources(resources, filterConfig, 'zones');
-    const machineResources = filterResources(resources, filterConfig, 'machineTypes');
-
-    const countMap = {
-        statuses: {} as Record<string, number>,
-        types: {} as Record<string, number>,
-        zones: {} as Record<string, number>,
-        machineTypes: {} as Record<string, number>
-    };
-
-    statusResources.forEach(r => countMap.statuses[r.status] = (countMap.statuses[r.status] || 0) + 1);
-    typeResources.forEach(r => countMap.types[r.type] = (countMap.types[r.type] || 0) + 1);
-    zoneResources.forEach(r => countMap.zones[r.zone] = (countMap.zones[r.zone] || 0) + 1);
-    machineResources.forEach(r => { if(r.machineType) countMap.machineTypes[r.machineType] = (countMap.machineTypes[r.machineType] || 0) + 1 });
-
-    return countMap;
+    return calculateFacetedCounts(resources, filterConfig);
   }, [resources, filterConfig]);
+
+  // --- Grouping Logic ---
+  const displayItems = useMemo<DisplayItem[]>(() => {
+    if (!groupByLabel) return filteredResources.map(r => ({ type: 'resource', data: r }));
+
+    const groups = new Map<string, GceResource[]>();
+    const noLabelKey = 'Unassigned';
+
+    // 1. Group
+    filteredResources.forEach(r => {
+      const val = r.labels[groupByLabel] || noLabelKey;
+      if (!groups.has(val)) groups.set(val, []);
+      groups.get(val)!.push(r);
+    });
+
+    // 2. Sort Groups
+    const sortedKeys = Array.from(groups.keys()).sort();
+
+    // 3. Flatten
+    const items: DisplayItem[] = [];
+    sortedKeys.forEach(key => {
+        const groupResources = groups.get(key)!;
+        const isCollapsed = collapsedGroups.has(key);
+        
+        // Add Header
+        items.push({ 
+            type: 'header', 
+            key, 
+            label: key, 
+            count: groupResources.length,
+            isCollapsed
+        });
+
+        // Add Items if not collapsed
+        if (!isCollapsed) {
+            groupResources.forEach(r => items.push({ type: 'resource', data: r }));
+        }
+    });
+
+    return items;
+  }, [filteredResources, groupByLabel, collapsedGroups]);
+
+  // --- Pagination Logic (Override hook if grouped) ---
+  const totalItems = displayItems.length;
+  const totalPages = Math.ceil(totalItems / itemsPerPage);
+  // Ensure current page is valid when grouping changes
+  useEffect(() => {
+      if (defaultCurrentPage > totalPages && totalPages > 0) {
+          setCurrentPage(1);
+      }
+  }, [totalPages, defaultCurrentPage, setCurrentPage]);
+
+  const startIndex = (defaultCurrentPage - 1) * itemsPerPage;
+  const paginatedDisplayItems = useMemo(() => 
+      displayItems.slice(startIndex, startIndex + itemsPerPage), 
+  [displayItems, startIndex, itemsPerPage]);
+
+  const toggleGroupCollapse = (groupKey: string) => {
+      setCollapsedGroups(prev => {
+          const next = new Set(prev);
+          if (next.has(groupKey)) next.delete(groupKey);
+          else next.add(groupKey);
+          return next;
+      });
+  };
 
   // --- Handlers ---
   const toggleSelectAll = useCallback(() => {
@@ -98,8 +161,6 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
 
   const executeBulkStudioUpdates = useCallback((updates: Map<string, Record<string, string>>) => {
     if (!onBulkUpdateLabels) return;
-
-    // Pass the entire map to the bulk handler for optimized processing
     onBulkUpdateLabels(updates);
     setSelectedIds(new Set());
   }, [onBulkUpdateLabels]);
@@ -128,26 +189,48 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
 
   const renderEmptyState = () => {
      if (isLoading) return null;
+     
+     // Scenario 1: Absolutely no resources (Project empty or Connection failed)
      if (resources.length === 0) {
         return (
-          <div className="flex flex-col items-center justify-center py-20 text-slate-500 w-full">
-             <div className="bg-white dark:bg-slate-900/50 p-6 rounded-full mb-4 border border-slate-300 dark:border-slate-800 shadow-xl">
-                <Search className="w-10 h-10 opacity-50" />
+          <div className="flex flex-col items-center justify-center py-24 w-full text-center">
+             <div className="relative group">
+                <div className="absolute inset-0 bg-blue-500/20 rounded-full blur-2xl group-hover:blur-3xl transition-all duration-700 animate-pulse"></div>
+                <div className="bg-white dark:bg-slate-900 p-8 rounded-full relative shadow-2xl border border-slate-200 dark:border-slate-800">
+                    <Cloud className="w-16 h-16 text-slate-300 dark:text-slate-600" />
+                </div>
              </div>
-             <h3 className="text-xl font-medium text-slate-700 dark:text-slate-400">No resources discovered</h3>
-             <p className="max-w-xs text-center mt-2 text-sm text-slate-500">Connect to a project to view resources or check your API permissions.</p>
+             <h3 className="text-2xl font-bold text-slate-800 dark:text-slate-200 mt-8 mb-2">No Resources Detected</h3>
+             <p className="max-w-md text-slate-500 dark:text-slate-400 text-sm leading-relaxed mb-8">
+                We couldn't find any resources in this project. 
+                Verify your API Token permissions or try refreshing the connection.
+             </p>
+             {onRefresh && (
+                <Button variant="primary" onClick={onRefresh} className="shadow-lg shadow-blue-500/20">
+                    Retry Connection
+                </Button>
+             )}
           </div>
         );
      }
+
+     // Scenario 2: Resources exist, but Filter returns 0 matches
      return (
-        <div className="flex flex-col items-center justify-center py-20 text-slate-500 animate-in fade-in w-full">
-           <div className="bg-white dark:bg-slate-900/50 p-6 rounded-full mb-4 border border-slate-300 dark:border-slate-800 shadow-xl">
-              <FilterX className="w-10 h-10 opacity-50" />
+        <div className="flex flex-col items-center justify-center py-20 w-full animate-in fade-in zoom-in-95 duration-300">
+           <div className="bg-slate-50 dark:bg-slate-900/50 p-6 rounded-full mb-4 border border-slate-200 dark:border-slate-800 shadow-inner">
+              <FilterX className="w-10 h-10 text-indigo-400" />
            </div>
-           <h3 className="text-xl font-medium text-slate-700 dark:text-slate-400">No matching resources</h3>
-           <p className="max-w-xs text-center mt-2 text-sm text-slate-500">Try adjusting your filters or search terms.</p>
-           <Button variant="ghost" size="sm" className="mt-4" onClick={() => onFilterChange({ search: '', statuses: [], types: [], zones: [], machineTypes: [], hasPublicIp: null, dateStart: '', dateEnd: '', labelLogic: 'AND', labels: [], showUnlabeledOnly: false })}>
-              Clear all filters
+           <h3 className="text-lg font-semibold text-slate-700 dark:text-slate-300">No matching resources</h3>
+           <p className="max-w-xs text-center mt-2 text-sm text-slate-500">
+              Your filters are too strict. Try resetting them to view your inventory.
+           </p>
+           <Button 
+              variant="secondary" 
+              size="sm" 
+              className="mt-6 shadow-sm"
+              onClick={() => onFilterChange({ search: '', statuses: [], types: [], zones: [], machineTypes: [], hasPublicIp: null, dateStart: '', dateEnd: '', labelLogic: 'AND', labels: [], showUnlabeledOnly: false })}
+           >
+              Clear All Filters
            </Button>
         </div>
      );
@@ -169,6 +252,9 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
           onSaveView={onSaveView}
           availableZones={availableZones}
           availableMachineTypes={availableMachineTypes}
+          availableLabelKeys={availableLabelKeys}
+          groupBy={groupByLabel}
+          onGroupByChange={setGroupByLabel}
           counts={counts}
           onRefresh={onRefresh}
           isRefreshing={isLoading}
@@ -187,10 +273,9 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
           onApply={executeBulkStudioUpdates}
        />
 
-       {/* Main Table Area: Removed overflow-auto and fixed height to allow dynamic growth */}
+       {/* Main Table Area */}
        <div className="bg-white/40 dark:bg-slate-900/40 relative min-h-[400px]">
           <table className="w-full text-left text-sm border-collapse">
-             {/* Offset sticky top to accommodate filter bar (~73px estimate, adjustable) */}
              <thead className="sticky top-[73px] z-10">
                <tr className="bg-slate-50/95 dark:bg-slate-950/95 border-b border-slate-300 dark:border-slate-800 text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider backdrop-blur-md shadow-sm">
                  <th className="pl-6 pr-3 py-4 w-12">
@@ -209,18 +294,44 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
              <tbody className="divide-y divide-slate-200 dark:divide-slate-800/50">
                {isLoading && Array.from({ length: 8 }).map((_, i) => <TableRowSkeleton key={i} />)}
                
-               {!isLoading && paginatedResources.map(r => (
-                 <ResourceRow 
-                   key={r.id} 
-                   resource={r} 
-                   isSelected={selectedIds.has(r.id)}
-                   onToggleSelect={toggleSelect}
-                   onUpdate={onUpdateLabels}
-                   onApply={onApplyLabels}
-                   onRevert={onRevert}
-                   onViewHistory={setHistoryResource}
-                 />
-               ))}
+               <AnimatePresence mode="popLayout">
+                 {!isLoading && paginatedDisplayItems.map((item, idx) => {
+                   if (item.type === 'header') {
+                      return (
+                          <motion.tr 
+                            key={`group-${item.key}`} 
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="bg-slate-100 dark:bg-slate-900/80 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors" 
+                            onClick={() => toggleGroupCollapse(item.key)}
+                          >
+                              <td colSpan={7} className="px-6 py-2 text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide border-t border-slate-200 dark:border-slate-800">
+                                  <div className="flex items-center gap-2">
+                                      {item.isCollapsed ? <ChevronRight className="w-4 h-4"/> : <ChevronDown className="w-4 h-4"/>}
+                                      <Tag className="w-3.5 h-3.5 text-slate-400" />
+                                      <span>{groupByLabel}: <span className="text-blue-600 dark:text-blue-400">{item.label}</span></span>
+                                      <span className="ml-2 px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-[10px] text-slate-500">{item.count} items</span>
+                                  </div>
+                              </td>
+                          </motion.tr>
+                      );
+                   }
+                   const r = item.data;
+                   return (
+                     <ResourceRow 
+                       key={r.id} 
+                       resource={r} 
+                       isSelected={selectedIds.has(r.id)}
+                       onToggleSelect={toggleSelect}
+                       onUpdate={onUpdateLabels}
+                       onApply={onApplyLabels}
+                       onRevert={onRevert}
+                       onViewHistory={setHistoryResource}
+                     />
+                   );
+                 })}
+               </AnimatePresence>
              </tbody>
           </table>
           {!isLoading && filteredResources.length === 0 && renderEmptyState()}
@@ -229,10 +340,10 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
        {filteredResources.length > 0 && !isLoading && (
          <div className="shrink-0">
             <PaginationControl 
-                currentPage={currentPage}
+                currentPage={defaultCurrentPage}
                 totalPages={totalPages}
                 itemsPerPage={itemsPerPage}
-                totalItems={filteredResources.length}
+                totalItems={totalItems} // Use display items count if grouped
                 startIndex={startIndex}
                 onPageChange={setCurrentPage}
                 onItemsPerPageChange={handleItemsPerPageChange}

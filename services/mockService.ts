@@ -1,6 +1,8 @@
+
 import { GceResource, ResourceType, LabelHistoryEntry, ProvisioningModel, ResourceDisk, ResourceIP } from '../types';
 
 const ZONES = ['us-central1-a', 'us-central1-b', 'europe-west1-d', 'asia-east1-a'];
+const REGIONS = ['us-central1', 'europe-west1', 'asia-east1', 'us-east1'];
 const MACHINE_TYPES = ['n1-standard-1', 'e2-medium', 'c2-standard-4', 'm1-ultramem-40', 'e2-micro'];
 const ENVIRONMENTS = ['production', 'staging', 'development', 'qa'];
 const DEPARTMENTS = ['engineering', 'finance', 'marketing', 'data-science', 'hr'];
@@ -62,18 +64,29 @@ export const generateMockResources = (count: number = 30): GceResource[] => {
   for (let i = 0; i < count; i++) {
     const env = getRandomItem(ENVIRONMENTS);
     const app = getRandomItem(APPLICATIONS);
-    const type = Math.random() > 0.7 ? 'DISK' : 'INSTANCE';
+    
+    // Randomize Type
+    const rand = Math.random();
+    let type: ResourceType = 'INSTANCE';
+    if (rand > 0.8) type = 'BUCKET';
+    else if (rand > 0.7) type = 'DISK';
+    else if (rand > 0.65) type = 'CLOUD_SQL';
+    
     const isLabeled = Math.random() > 0.4;
     
-    const name = `${env}-${app}-${type === 'INSTANCE' ? 'vm' : 'disk'}-${Math.floor(Math.random() * 99)}`;
+    let name = `${env}-${app}-${Math.floor(Math.random() * 99)}`;
+    if (type === 'INSTANCE') name += '-vm';
+    if (type === 'DISK') name += '-disk';
+    if (type === 'BUCKET') name = `${env}-assets-${app}-${Math.floor(Math.random() * 9999)}`;
+    
     const machineType = type === 'INSTANCE' ? getRandomItem(MACHINE_TYPES) : undefined;
     
     // FinOps logic
     let provisioning: ProvisioningModel = 'STANDARD';
     if (type === 'INSTANCE') {
-        const rand = Math.random();
-        if (rand > 0.7) provisioning = 'SPOT';
-        else if (rand > 0.9) provisioning = 'RESERVED';
+        const r = Math.random();
+        if (r > 0.7) provisioning = 'SPOT';
+        else if (r > 0.9) provisioning = 'RESERVED';
     }
 
     const labels: Record<string, string> = {};
@@ -88,15 +101,16 @@ export const generateMockResources = (count: number = 30): GceResource[] => {
       id: generateId(),
       name: name,
       type: type as ResourceType,
-      zone: getRandomItem(ZONES),
+      zone: type === 'BUCKET' ? getRandomItem(REGIONS) : getRandomItem(ZONES),
       machineType: machineType,
       sizeGb: type === 'DISK' ? (Math.floor(Math.random() * 500) + 10).toString() : undefined,
-      status: Math.random() > 0.2 ? (type === 'INSTANCE' ? 'RUNNING' : 'READY') : 'STOPPED',
+      status: type === 'BUCKET' ? 'READY' : (Math.random() > 0.2 ? (type === 'INSTANCE' ? 'RUNNING' : 'READY') : 'STOPPED'),
       creationTimestamp: new Date(Date.now() - Math.random() * 30000000000).toISOString(),
       
       provisioningModel: provisioning,
       disks: type === 'INSTANCE' ? generateDisks(name) : undefined,
       ips: type === 'INSTANCE' ? generateIPs() : undefined,
+      storageClass: type === 'BUCKET' ? 'STANDARD' : undefined,
       
       labels: labels,
       labelFingerprint: generateId(),

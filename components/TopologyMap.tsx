@@ -1,5 +1,5 @@
 
-import React, { useCallback, useEffect, useState, memo } from 'react';
+import React, { useCallback, useEffect, useState, memo, useMemo } from 'react';
 import ReactFlow, { 
   Background, 
   Controls, 
@@ -21,7 +21,7 @@ import { GceResource } from '../types';
 import { 
   Server, HardDrive, Globe, Cloud, Database, Monitor, 
   Activity, X, Network as NetworkIcon,
-  Maximize, Cpu, Zap, Box, Layers, ArrowRight
+  Maximize, Cpu, Zap, Box, Layers, ArrowRight, Tag
 } from 'lucide-react';
 import { RegionIcon } from './RegionIcon';
 import { Badge, Button, ToggleSwitch } from './DesignSystem';
@@ -40,13 +40,12 @@ const NetworkNode = memo(({ data, selected }: { data: any, selected: boolean }) 
   <div className={`
     relative w-24 h-24 rounded-full flex flex-col items-center justify-center transition-all duration-500 group
     ${selected 
-      ? 'bg-blue-600/90 shadow-[0_0_50px_rgba(37,99,235,0.5)] scale-110 z-50' 
-      : 'bg-slate-900/90 dark:bg-slate-950/90 shadow-2xl border border-slate-700/50 backdrop-blur-md'}
+      ? 'bg-blue-600/90 shadow-[0_0_50px_rgba(37,99,235,0.5)] scale-110 z-50 ring-4 ring-blue-500/20' 
+      : 'bg-slate-900/90 dark:bg-slate-950/90 shadow-2xl border border-slate-700/50 backdrop-blur-md opacity-80 hover:opacity-100'}
   `}>
     <Handle type="source" position={Position.Right} className="!opacity-0" />
     <Handle type="target" position={Position.Left} className="!opacity-0" />
     
-    {/* Orbiting Ring Effect */}
     <div className={`absolute inset-0 rounded-full border-2 border-dashed border-slate-600/50 ${selected ? 'animate-spin-slow' : 'group-hover:animate-spin-slow'}`}></div>
     <div className={`absolute inset-[-4px] rounded-full border border-slate-700/30 opacity-50`}></div>
     
@@ -55,9 +54,9 @@ const NetworkNode = memo(({ data, selected }: { data: any, selected: boolean }) 
     </div>
 
     <div className={`
-        absolute -bottom-8 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest backdrop-blur-md border transition-all
+        absolute -bottom-8 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest backdrop-blur-md border transition-all whitespace-nowrap
         ${selected 
-            ? 'bg-blue-600 text-white border-blue-500 shadow-lg' 
+            ? 'bg-blue-600 text-white border-blue-500 shadow-lg scale-110' 
             : 'bg-white/90 dark:bg-slate-900/90 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'}
     `}>
       {data.label}
@@ -75,6 +74,7 @@ const ResourceNode = memo(({ data, selected }: { data: any, selected: boolean })
       case 'DISK': return <HardDrive className="w-5 h-5 text-purple-500" />;
       case 'CLOUD_RUN': return <Cloud className="w-5 h-5 text-indigo-500" />;
       case 'CLOUD_SQL': return <Database className="w-5 h-5 text-orange-500" />;
+      case 'BUCKET': return <Box className="w-5 h-5 text-yellow-500" />;
       default: return <Monitor className="w-5 h-5 text-slate-500" />;
     }
   };
@@ -95,7 +95,6 @@ const ResourceNode = memo(({ data, selected }: { data: any, selected: boolean })
     `}>
       <Handle type="target" position={Position.Left} className="!bg-slate-400/50 !w-2 !h-2 !-left-[5px] !border-none" />
       
-      {/* Gloss Effect */}
       <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent pointer-events-none"></div>
 
       <div className="p-3.5">
@@ -109,7 +108,9 @@ const ResourceNode = memo(({ data, selected }: { data: any, selected: boolean })
                     {data.label}
                 </div>
                 <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono flex items-center gap-1">
-                   {data.type === 'INSTANCE' ? data.machineType : data.type}
+                   {data.type === 'INSTANCE' ? data.machineType : 
+                    data.type === 'BUCKET' ? data.storageClass :
+                    data.type}
                 </div>
              </div>
           </div>
@@ -122,7 +123,6 @@ const ResourceNode = memo(({ data, selected }: { data: any, selected: boolean })
           )}
         </div>
 
-        {/* Visual Specs / Mini Metrics */}
         {data.type === 'INSTANCE' && (
            <div className="mt-2 space-y-1.5">
               <div className="flex items-center justify-between text-[9px] text-slate-400 uppercase font-bold tracking-wider">
@@ -146,7 +146,6 @@ const ResourceNode = memo(({ data, selected }: { data: any, selected: boolean })
            </div>
         )}
 
-        {/* IP Address Snippet */}
         {data.ip && (
             <div className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-[10px] font-mono text-slate-500 truncate flex items-center gap-1">
                 <Globe className="w-3 h-3 opacity-50" />
@@ -175,13 +174,12 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'LR') => 
   dagreGraph.setGraph({ 
     rankdir: direction, 
     align: 'DL', 
-    nodesep: 50, // Increase horizontal spacing
-    ranksep: 120, // Increase hierarchical spacing
-    ranker: 'network-simplex' // Better for structured flows
+    nodesep: 50, 
+    ranksep: 120, 
+    ranker: 'network-simplex'
   });
 
   nodes.forEach((node) => {
-    // Precise dimensions for layout calc
     const width = node.type === 'network' ? 120 : 260;
     const height = node.type === 'network' ? 120 : 160;
     dagreGraph.setNode(node.id, { width, height });
@@ -227,6 +225,12 @@ const TopologyMapInner: React.FC<TopologyMapProps> = ({ resources }) => {
   
   const { fitView } = useReactFlow();
 
+  // Create a structural hash. Including selectedNode ID to trigger style updates on selection.
+  const topologyHash = useMemo(() => {
+    return resources.map(r => `${r.id}-${r.status}-${r.ips?.length}-${r.disks?.length}`).join('|') 
+           + `-${filters.showDisks}-${filters.showStopped}-${selectedNode?.id}`;
+  }, [resources, filters, selectedNode]);
+
   // Graph Construction Logic
   useEffect(() => {
     const rawNodes: Node[] = [];
@@ -256,14 +260,17 @@ const TopologyMapInner: React.FC<TopologyMapProps> = ({ resources }) => {
     resources.forEach(r => {
       if (!filters.showStopped && r.status === 'STOPPED') return;
       const isRunning = r.status === 'RUNNING' || r.status === 'READY';
+      const isSelected = selectedNode?.id === r.id;
 
       // Add Resource Node
       rawNodes.push({
         id: r.id,
         type: 'resource',
+        selected: isSelected, // Pass selection state to node for styling
         data: { 
           label: r.name, 
-          machineType: r.machineType, 
+          machineType: r.machineType,
+          storageClass: r.storageClass,
           type: r.type,
           status: r.status,
           zone: r.zone,
@@ -271,24 +278,29 @@ const TopologyMapInner: React.FC<TopologyMapProps> = ({ resources }) => {
           resource: r 
         },
         position: { x: 0, y: 0 },
+        zIndex: isSelected ? 50 : 1, // Bring selected to front
       });
 
       // Edge: Network -> Resource
       r.ips?.forEach(ip => {
+        const isConnectedToSelected = selectedNode && (selectedNode.id === r.id || selectedNode.ips?.some(sip => sip.network === ip.network));
+        const isFocus = !selectedNode || isConnectedToSelected;
+
         rawEdges.push({
           id: `e-${ip.network}-${r.id}`,
           source: `net-${ip.network}`,
           target: r.id,
-          type: 'default', // Bezier is default in newer ReactFlow, or explicitly 'bezier'
-          animated: isRunning, // Animate traffic only if active
+          type: 'default',
+          animated: isRunning,
           style: { 
-              stroke: isRunning ? '#3b82f6' : '#64748b', 
-              strokeWidth: isRunning ? 2 : 1, 
-              opacity: isRunning ? 0.8 : 0.3 
+              stroke: isConnectedToSelected ? '#3b82f6' : (isRunning ? '#3b82f6' : '#64748b'), 
+              strokeWidth: isConnectedToSelected ? 3 : (isRunning ? 2 : 1), 
+              opacity: isFocus ? (isRunning ? 0.8 : 0.5) : 0.1 
           },
+          zIndex: isConnectedToSelected ? 20 : 0,
           markerEnd: { 
               type: MarkerType.ArrowClosed, 
-              color: isRunning ? '#3b82f6' : '#64748b' 
+              color: isConnectedToSelected ? '#3b82f6' : (isRunning ? '#3b82f6' : '#64748b') 
           },
         });
       });
@@ -296,9 +308,11 @@ const TopologyMapInner: React.FC<TopologyMapProps> = ({ resources }) => {
       // Disks (Attached)
       if (filters.showDisks) {
         r.disks?.forEach((d, idx) => {
-          // Only show non-boot disks as separate nodes to reduce clutter, or all if preferred
-          // Showing all for detail request
           const diskNodeId = `${r.id}-disk-${idx}`;
+          const isDiskSelected = selectedNode?.id === diskNodeId;
+          // Disk is implicitly selected if parent VM is selected
+          const isRelatedToSelection = selectedNode?.id === r.id; 
+
           rawNodes.push({
             id: diskNodeId,
             type: 'resource',
@@ -309,15 +323,23 @@ const TopologyMapInner: React.FC<TopologyMapProps> = ({ resources }) => {
               status: 'READY' 
             },
             position: { x: 0, y: 0 },
+            zIndex: isRelatedToSelection ? 40 : 1
           });
           
+          const isEdgeFocus = !selectedNode || isRelatedToSelection;
+
           rawEdges.push({
             id: `e-${r.id}-${diskNodeId}`,
             source: r.id,
             target: diskNodeId,
-            type: 'step', // Step lines for storage look distinct
+            type: 'step', 
             animated: false,
-            style: { stroke: '#a855f7', strokeWidth: 1.5, strokeDasharray: '4,4', opacity: 0.6 },
+            style: { 
+              stroke: '#a855f7', 
+              strokeWidth: isRelatedToSelection ? 2 : 1.5, 
+              strokeDasharray: '4,4', 
+              opacity: isEdgeFocus ? 0.6 : 0.1 
+            },
             markerEnd: { type: MarkerType.ArrowClosed, color: '#a855f7' }
           });
         });
@@ -328,14 +350,32 @@ const TopologyMapInner: React.FC<TopologyMapProps> = ({ resources }) => {
     setNodes(layoutedNodes);
     setEdges(layoutedEdges);
     
-    // Smooth transition to new layout
-    setTimeout(() => fitView({ padding: 0.3, duration: 800 }), 100);
+    // Fit view only on initial load or major filter changes, not on selection to prevent jumping
+    // We can infer this by checking if selectedNode is null (approximate)
+    if (!selectedNode) {
+       setTimeout(() => fitView({ padding: 0.3, duration: 800 }), 100);
+    }
 
-  }, [resources, filters, setNodes, setEdges, fitView]);
+  }, [topologyHash, fitView, setNodes, setEdges, filters, selectedNode, resources]);
 
   const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
     if (node.type === 'resource' && node.data.resource) {
       setSelectedNode(node.data.resource);
+    } else if (node.type === 'resource' && node.data.type === 'DISK') {
+       // Handle standalone disk nodes generated for visualization
+       // Construct a partial resource object for display
+       setSelectedNode({
+          id: node.id,
+          name: node.data.label,
+          type: 'DISK',
+          zone: 'attached',
+          status: 'READY',
+          creationTimestamp: new Date().toISOString(),
+          provisioningModel: 'STANDARD',
+          labels: {},
+          labelFingerprint: 'virtual-disk',
+          machineType: node.data.machineType, // Hacked storage size into machineType field for vis
+       } as GceResource);
     } else {
       setSelectedNode(null);
     }
@@ -372,7 +412,6 @@ const TopologyMapInner: React.FC<TopologyMapProps> = ({ resources }) => {
         
         <Controls className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 fill-slate-500 rounded-lg shadow-lg" />
         
-        {/* Modern Floating Control Panel */}
         <Panel position="top-left" className="m-6">
            <div className="bg-white/90 dark:bg-slate-900/80 backdrop-blur-md p-5 rounded-2xl border border-white/20 dark:border-slate-700 shadow-2xl w-72 space-y-5 animate-in slide-in-from-left-4 fade-in duration-500">
               <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
@@ -410,7 +449,6 @@ const TopologyMapInner: React.FC<TopologyMapProps> = ({ resources }) => {
            </div>
         </Panel>
 
-        {/* Legend Panel */}
         <Panel position="bottom-left" className="m-6">
             <div className="bg-white/80 dark:bg-slate-900/60 backdrop-blur-sm p-3 rounded-xl border border-slate-200 dark:border-slate-800/50 shadow-lg flex gap-4 text-[10px] text-slate-500 font-medium">
                 <div className="flex items-center gap-1.5">
@@ -429,7 +467,6 @@ const TopologyMapInner: React.FC<TopologyMapProps> = ({ resources }) => {
         </Panel>
       </ReactFlow>
 
-      {/* Slide-out Details Inspector */}
       <AnimatePresence>
         {selectedNode && (
           <motion.div 
@@ -439,12 +476,11 @@ const TopologyMapInner: React.FC<TopologyMapProps> = ({ resources }) => {
             transition={{ type: "spring", stiffness: 300, damping: 25 }}
             className="absolute right-0 top-0 bottom-0 w-[400px] bg-white/95 dark:bg-slate-900/95 backdrop-blur-2xl border-l border-slate-200 dark:border-slate-800 shadow-2xl z-50 flex flex-col"
           >
-             {/* Header */}
              <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex justify-between items-start bg-gradient-to-b from-slate-50 to-transparent dark:from-black/20">
                 <div className="flex-1 pr-4">
                    <div className="flex items-center gap-2 mb-2">
                        <Badge variant="neutral" className="font-mono text-[10px]">{selectedNode.type}</Badge>
-                       <span className={`w-2 h-2 rounded-full ${selectedNode.status === 'RUNNING' ? 'bg-emerald-500 shadow-[0_0_10px_#10b981]' : 'bg-red-500'}`}></span>
+                       <span className={`w-2 h-2 rounded-full ${selectedNode.status === 'RUNNING' || selectedNode.status === 'READY' ? 'bg-emerald-500 shadow-[0_0_10px_#10b981]' : 'bg-red-500'}`}></span>
                    </div>
                    <h3 className="text-xl font-bold text-slate-900 dark:text-white break-words leading-tight">{selectedNode.name}</h3>
                    <div className="flex items-center gap-2 mt-2 text-xs text-slate-500">
@@ -457,53 +493,73 @@ const TopologyMapInner: React.FC<TopologyMapProps> = ({ resources }) => {
              </div>
 
              <div className="flex-1 overflow-y-auto p-6 space-y-8">
-                {/* Status Card */}
                 <div className="grid grid-cols-2 gap-4">
                    <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
                       <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">State</div>
-                      <div className={`text-lg font-bold flex items-center gap-2 ${selectedNode.status === 'RUNNING' ? 'text-emerald-500' : 'text-slate-500'}`}>
+                      <div className={`text-lg font-bold flex items-center gap-2 ${selectedNode.status === 'RUNNING' || selectedNode.status === 'READY' ? 'text-emerald-500' : 'text-slate-500'}`}>
                          <Activity className="w-4 h-4" /> {selectedNode.status}
                       </div>
                    </div>
                    <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
-                      <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Config</div>
-                      <div className="text-sm font-bold text-slate-700 dark:text-slate-300 truncate">
-                         {selectedNode.machineType || 'Standard'}
+                      <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">
+                         {selectedNode.type === 'BUCKET' ? 'Storage Class' : 'Machine Type'}
+                      </div>
+                      <div className="text-sm font-bold text-slate-700 dark:text-slate-300 truncate" title={selectedNode.type === 'BUCKET' ? selectedNode.storageClass : selectedNode.machineType}>
+                         {selectedNode.type === 'BUCKET' ? selectedNode.storageClass : (selectedNode.machineType || 'Standard')}
                       </div>
                    </div>
                 </div>
 
-                {/* Network */}
+                {/* Labels Section */}
                 <div>
                    <h4 className="text-xs font-bold uppercase text-slate-500 mb-4 flex items-center gap-2 tracking-wider">
-                      <NetworkIcon className="w-3 h-3" /> Network Interface
+                      <Tag className="w-3 h-3" /> Metadata Labels
                    </h4>
-                   {selectedNode.ips && selectedNode.ips.length > 0 ? selectedNode.ips.map((ip, i) => (
-                      <div key={i} className="mb-3 p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs shadow-sm">
-                         <div className="flex justify-between items-center mb-2 pb-2 border-b border-slate-100 dark:border-slate-800">
-                            <span className="font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2">
-                                <Box className="w-3 h-3 text-blue-500" /> VPC: {ip.network}
+                   {Object.keys(selectedNode.labels || {}).length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                         {Object.entries(selectedNode.labels).map(([k,v]) => (
+                            <span key={k} className="inline-flex items-center px-2 py-1 rounded text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                               <span className="font-semibold mr-1">{k}:</span> {v}
                             </span>
-                         </div>
-                         <div className="space-y-2 font-mono text-slate-500">
-                            <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-950 p-2 rounded">
-                                <span>Internal IP</span> 
-                                <span className="text-slate-800 dark:text-slate-200 select-all">{ip.internal}</span>
-                            </div>
-                            {ip.external && (
-                                <div className="flex justify-between items-center bg-blue-50 dark:bg-blue-900/20 p-2 rounded border border-blue-100 dark:border-blue-900/30">
-                                    <span className="text-blue-700 dark:text-blue-300">Public IP</span> 
-                                    <span className="text-blue-700 dark:text-blue-300 font-bold select-all">{ip.external}</span>
-                                </div>
-                            )}
-                         </div>
+                         ))}
                       </div>
-                   )) : (
-                     <div className="text-slate-400 italic text-sm">No network interfaces attached.</div>
+                   ) : (
+                      <div className="text-slate-400 italic text-sm">No labels assigned.</div>
                    )}
                 </div>
 
-                {/* Storage */}
+                {/* Network Section (Conditional) */}
+                {selectedNode.type !== 'BUCKET' && selectedNode.type !== 'DISK' && (
+                   <div>
+                      <h4 className="text-xs font-bold uppercase text-slate-500 mb-4 flex items-center gap-2 tracking-wider">
+                         <NetworkIcon className="w-3 h-3" /> Network Interface
+                      </h4>
+                      {selectedNode.ips && selectedNode.ips.length > 0 ? selectedNode.ips.map((ip, i) => (
+                         <div key={i} className="mb-3 p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs shadow-sm">
+                            <div className="flex justify-between items-center mb-2 pb-2 border-b border-slate-100 dark:border-slate-800">
+                               <span className="font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2">
+                                   <Box className="w-3 h-3 text-blue-500" /> VPC: {ip.network}
+                               </span>
+                            </div>
+                            <div className="space-y-2 font-mono text-slate-500">
+                               <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-950 p-2 rounded">
+                                   <span>Internal IP</span> 
+                                   <span className="text-slate-800 dark:text-slate-200 select-all">{ip.internal}</span>
+                               </div>
+                               {ip.external && (
+                                   <div className="flex justify-between items-center bg-blue-50 dark:bg-blue-900/20 p-2 rounded border border-blue-100 dark:border-blue-900/30">
+                                       <span className="text-blue-700 dark:text-blue-300">Public IP</span> 
+                                       <span className="text-blue-700 dark:text-blue-300 font-bold select-all">{ip.external}</span>
+                                   </div>
+                               )}
+                            </div>
+                         </div>
+                      )) : (
+                        <div className="text-slate-400 italic text-sm">No network interfaces attached.</div>
+                      )}
+                   </div>
+                )}
+
                 {selectedNode.disks && selectedNode.disks.length > 0 && (
                    <div>
                        <h4 className="text-xs font-bold uppercase text-slate-500 mb-4 flex items-center gap-2 tracking-wider">

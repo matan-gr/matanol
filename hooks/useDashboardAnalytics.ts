@@ -9,15 +9,28 @@ export const useDashboardAnalytics = (resources: GceResource[], stats: { total: 
     // Resource Counts
     const vmCount = resources.filter(r => r.type === 'INSTANCE').length;
     const diskCount = resources.filter(r => r.type === 'DISK').length;
+    const bucketCount = resources.filter(r => r.type === 'BUCKET').length;
     const imageCount = resources.filter(r => r.type === 'IMAGE').length;
     const snapshotCount = resources.filter(r => r.type === 'SNAPSHOT').length;
     const cloudRunCount = resources.filter(r => r.type === 'CLOUD_RUN').length;
     const sqlCount = resources.filter(r => r.type === 'CLOUD_SQL').length;
     
+    // Storage Calculations
+    let totalDiskGb = 0;
+    let totalImageGb = 0;
+    let totalSnapshotGb = 0;
+
+    resources.forEach(r => {
+        const size = r.sizeGb ? parseInt(r.sizeGb, 10) : 0;
+        if (r.type === 'DISK') totalDiskGb += size;
+        if (r.type === 'IMAGE') totalImageGb += size;
+        if (r.type === 'SNAPSHOT') totalSnapshotGb += size;
+    });
+
     // Risks
     const stoppedInstances = resources.filter(r => r.type === 'INSTANCE' && r.status === 'STOPPED');
     
-    // Network Exposure (Valid Data replacement for Mock Cost)
+    // Network Exposure
     const publicIpCount = resources.filter(r => r.ips?.some(ip => !!ip.external) || r.type === 'CLOUD_RUN').length;
 
     // Provisioning Mix (VM Only)
@@ -60,6 +73,7 @@ export const useDashboardAnalytics = (resources: GceResource[], stats: { total: 
         complianceRate,
         vmCount,
         diskCount,
+        bucketCount,
         imageCount,
         snapshotCount,
         cloudRunCount,
@@ -73,7 +87,10 @@ export const useDashboardAnalytics = (resources: GceResource[], stats: { total: 
         topZones,
         maxZone,
         labelDistribution,
-        maxLabelCount
+        maxLabelCount,
+        totalDiskGb,
+        totalImageGb,
+        totalSnapshotGb
     };
   }, [resources, stats]);
 };

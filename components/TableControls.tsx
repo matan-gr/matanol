@@ -6,9 +6,10 @@ import {
   ChevronLeft, ChevronRight, Check,
   Filter, Tag, Wand2, Trash2, Save, Globe, RefreshCw,
   History, ArrowRight, Server, Database, Cloud, 
-  HardDrive, Image as ImageIcon, Camera
+  HardDrive, Image as ImageIcon, Camera, Layers, Box,
+  User, Clock, GitCommit, FileDiff
 } from 'lucide-react';
-import { Button, Input, MultiSelect, ToggleSwitch, Modal, Badge } from './DesignSystem';
+import { Button, Input, MultiSelect, ToggleSwitch, Modal, Badge, Select } from './DesignSystem';
 import { RegionIcon } from './RegionIcon';
 
 // --- Filters ---
@@ -21,6 +22,9 @@ export interface ResourceFiltersProps {
   onSaveView: (name: string) => void;
   availableZones: string[];
   availableMachineTypes: string[];
+  availableLabelKeys: string[];
+  groupBy: string;
+  onGroupByChange: (key: string) => void;
   counts: {
     statuses: Record<string, number>;
     types: Record<string, number>;
@@ -32,7 +36,10 @@ export interface ResourceFiltersProps {
 }
 
 export const ResourceFilters = React.memo(({ 
-  config, onChange, show, onDownload, onToggleShow, onSaveView, availableZones, availableMachineTypes, counts, onRefresh, isRefreshing
+  config, onChange, show, onDownload, onToggleShow, onSaveView, 
+  availableZones, availableMachineTypes, availableLabelKeys,
+  groupBy, onGroupByChange,
+  counts, onRefresh, isRefreshing
 }: ResourceFiltersProps) => {
   const [viewName, setViewName] = useState('');
   const [isSavingView, setIsSavingView] = useState(false);
@@ -52,13 +59,27 @@ export const ResourceFilters = React.memo(({
     <div className="border-b border-slate-200 dark:border-slate-800 bg-white/40 dark:bg-slate-900/40 backdrop-blur-md sticky top-0 z-20 transition-all duration-300">
       {/* Toolbar */}
       <div className="p-4 flex flex-col sm:flex-row gap-4 justify-between items-center">
-        <Input 
-          icon={<Search className="w-4 h-4"/>} 
-          placeholder="Filter resources by name, ID or label..." 
-          value={config.search} 
-          onChange={e => onChange({ ...config, search: e.target.value })}
-          className="w-full sm:max-w-md shadow-sm border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/80 focus:ring-2 focus:ring-blue-500/20"
-        />
+        <div className="flex gap-2 w-full sm:max-w-xl">
+            <Input 
+              icon={<Search className="w-4 h-4"/>} 
+              placeholder="Filter resources..." 
+              value={config.search} 
+              onChange={e => onChange({ ...config, search: e.target.value })}
+              className="w-full shadow-sm border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/80 focus:ring-2 focus:ring-blue-500/20"
+            />
+            {/* Quick Group By Access */}
+            <div className="hidden sm:block min-w-[140px]">
+                <Select 
+                    value={groupBy} 
+                    onChange={e => onGroupByChange(e.target.value)}
+                    className="h-10 text-xs bg-white dark:bg-slate-900/80 border-slate-200 dark:border-slate-700"
+                >
+                    <option value="">No Grouping</option>
+                    {availableLabelKeys.map(k => <option key={k} value={k}>Group by: {k}</option>)}
+                </Select>
+            </div>
+        </div>
+
         <div className="flex items-center gap-3">
             {onRefresh && (
                 <Button 
@@ -97,6 +118,7 @@ export const ResourceFilters = React.memo(({
                    { id: 'INSTANCE', label: 'VM Instances', icon: Server },
                    { id: 'CLOUD_SQL', label: 'Cloud SQL', icon: Database },
                    { id: 'CLOUD_RUN', label: 'Cloud Run', icon: Cloud },
+                   { id: 'BUCKET', label: 'Buckets', icon: Box },
                    { id: 'DISK', label: 'Disks', icon: HardDrive },
                    { id: 'IMAGE', label: 'Images', icon: ImageIcon },
                    { id: 'SNAPSHOT', label: 'Snapshots', icon: Camera },
@@ -215,6 +237,19 @@ export const ResourceFilters = React.memo(({
               </div>
            </div>
 
+           {/* Mobile Group By */}
+           <div className="md:col-span-2 sm:hidden">
+              <label className="text-[10px] uppercase font-bold text-slate-500 mb-2 block tracking-wider">Group Resources By</label>
+              <Select 
+                  value={groupBy} 
+                  onChange={e => onGroupByChange(e.target.value)}
+                  className="h-10 text-sm bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
+              >
+                  <option value="">No Grouping</option>
+                  {availableLabelKeys.map(k => <option key={k} value={k}>{k}</option>)}
+              </Select>
+           </div>
+
            <div className="md:col-span-4 border-t border-slate-200 dark:border-slate-800 pt-6">
               <div className="flex flex-wrap items-center justify-between mb-4 gap-4">
                  <div className="flex items-center gap-6">
@@ -285,29 +320,19 @@ export const BulkActionBar = ({ count, onOpenStudio, onClear }: BulkActionBarPro
   if (count === 0) return null;
 
   return (
-    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 animate-in slide-in-from-bottom-4 duration-300">
-       <div className="bg-slate-900 text-white rounded-full px-4 py-2 shadow-2xl flex items-center gap-4 border border-slate-700">
-          <div className="flex items-center gap-2 pl-2">
-             <div className="bg-blue-600 text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center">
+    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom-4 duration-300">
+       <div className="bg-slate-900 text-white rounded-full shadow-2xl px-6 py-3 flex items-center gap-6 border border-slate-700/50 backdrop-blur-md">
+          <div className="flex items-center gap-3 pr-4 border-r border-slate-700">
+             <div className="bg-blue-600 rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold">
                 {count}
              </div>
              <span className="text-sm font-medium">Selected</span>
           </div>
-          <div className="h-4 w-px bg-slate-700"></div>
           <div className="flex items-center gap-2">
-             <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={onOpenStudio} 
-                className="text-white hover:text-blue-200 hover:bg-white/10 h-8"
-                leftIcon={<Wand2 className="w-4 h-4" />}
-             >
-                Label Studio
+             <Button variant="ghost" size="sm" onClick={onOpenStudio} className="text-slate-200 hover:text-white hover:bg-slate-800 rounded-full px-4 h-8" leftIcon={<Tag className="w-4 h-4"/>}>
+                Labeling Studio
              </Button>
-             <button 
-                onClick={onClear} 
-                className="p-1.5 rounded-full hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
-             >
+             <button onClick={onClear} className="p-1.5 hover:bg-slate-800 rounded-full text-slate-400 hover:text-white transition-colors">
                 <X className="w-4 h-4" />
              </button>
           </div>
@@ -318,138 +343,180 @@ export const BulkActionBar = ({ count, onOpenStudio, onClear }: BulkActionBarPro
 
 // --- Pagination ---
 interface PaginationControlProps {
-  currentPage: number;
-  totalPages: number;
-  itemsPerPage: number;
-  totalItems: number;
-  startIndex: number;
-  onPageChange: (page: number) => void;
-  onItemsPerPageChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+    currentPage: number;
+    totalPages: number;
+    itemsPerPage: number;
+    totalItems: number;
+    startIndex: number;
+    onPageChange: (page: number) => void;
+    onItemsPerPageChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
 }
 
 export const PaginationControl = ({ 
-  currentPage, totalPages, itemsPerPage, totalItems, startIndex, onPageChange, onItemsPerPageChange 
+    currentPage, totalPages, itemsPerPage, totalItems, startIndex,
+    onPageChange, onItemsPerPageChange 
 }: PaginationControlProps) => {
-  return (
-    <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 dark:border-slate-800 bg-white/40 dark:bg-slate-900/40 backdrop-blur-md">
-      <div className="flex items-center gap-4 text-sm text-slate-500 dark:text-slate-400">
-         <span>
-            Showing <span className="font-bold text-slate-900 dark:text-white">{totalItems > 0 ? startIndex + 1 : 0}</span> to <span className="font-bold text-slate-900 dark:text-white">{Math.min(startIndex + itemsPerPage, totalItems)}</span> of <span className="font-bold text-slate-900 dark:text-white">{totalItems}</span>
-         </span>
-         <select 
-            value={itemsPerPage} 
-            onChange={onItemsPerPageChange}
-            className="bg-transparent border border-slate-200 dark:border-slate-700 rounded px-2 py-1 text-xs focus:ring-2 focus:ring-blue-500 outline-none"
-         >
-            <option value={10}>10 per page</option>
-            <option value={15}>15 per page</option>
-            <option value={25}>25 per page</option>
-            <option value={35}>35 per page</option>
-            <option value={50}>50 per page</option>
-         </select>
-      </div>
-
-      <div className="flex items-center gap-2">
-         <Button 
-            variant="secondary" 
-            size="sm" 
-            onClick={() => onPageChange(currentPage - 1)} 
-            disabled={currentPage === 1}
-            className="h-8 w-8 p-0"
-         >
-            <ChevronLeft className="w-4 h-4" />
-         </Button>
-         <span className="text-sm font-medium text-slate-700 dark:text-slate-300 min-w-[3rem] text-center">
-            {currentPage} / {totalPages || 1}
-         </span>
-         <Button 
-            variant="secondary" 
-            size="sm" 
-            onClick={() => onPageChange(currentPage + 1)} 
-            disabled={currentPage === totalPages || totalPages === 0}
-            className="h-8 w-8 p-0"
-         >
-            <ChevronRight className="w-4 h-4" />
-         </Button>
-      </div>
-    </div>
-  );
+    return (
+        <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30">
+            <div className="text-xs text-slate-500 dark:text-slate-400">
+               Showing <span className="font-bold text-slate-700 dark:text-slate-300">{Math.min(startIndex + 1, totalItems)}</span> to <span className="font-bold text-slate-700 dark:text-slate-300">{Math.min(startIndex + itemsPerPage, totalItems)}</span> of <span className="font-bold text-slate-700 dark:text-slate-300">{totalItems}</span> resources
+            </div>
+            <div className="flex items-center gap-4">
+               <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500">Rows per page:</span>
+                  <Select 
+                    value={itemsPerPage} 
+                    onChange={onItemsPerPageChange}
+                    className="h-8 py-1 text-xs w-16 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
+                  >
+                     <option value={10}>10</option>
+                     <option value={20}>20</option>
+                     <option value={50}>50</option>
+                     <option value={100}>100</option>
+                  </Select>
+               </div>
+               <div className="flex items-center gap-1">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    disabled={currentPage === 1} 
+                    onClick={() => onPageChange(currentPage - 1)}
+                    className="px-2 h-8"
+                  >
+                     <ChevronLeft className="w-4 h-4" />
+                  </Button>
+                  <div className="text-xs font-medium text-slate-600 dark:text-slate-400 px-2">
+                     Page {currentPage} of {totalPages || 1}
+                  </div>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    disabled={currentPage === totalPages || totalPages === 0} 
+                    onClick={() => onPageChange(currentPage + 1)}
+                    className="px-2 h-8"
+                  >
+                     <ChevronRight className="w-4 h-4" />
+                  </Button>
+               </div>
+            </div>
+        </div>
+    );
 };
 
 // --- Audit History Modal ---
 interface AuditHistoryModalProps {
-  resource: GceResource | null;
-  onClose: () => void;
+    resource: GceResource | null;
+    onClose: () => void;
 }
 
 export const AuditHistoryModal = ({ resource, onClose }: AuditHistoryModalProps) => {
-  return (
-    <Modal
-      isOpen={!!resource}
-      onClose={onClose}
-      title={`Audit History: ${resource?.name}`}
-    >
-       <div className="space-y-6">
-          <div className="flex items-center gap-4 p-4 bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-100 dark:border-slate-800">
-             <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
-                <History className="w-6 h-6 text-blue-600 dark:text-blue-400" />
-             </div>
-             <div>
-                <h4 className="font-bold text-slate-800 dark:text-white">Change Log</h4>
-                <p className="text-xs text-slate-500">Track all label modifications for compliance auditing.</p>
-             </div>
-          </div>
+    if (!resource) return null;
 
-          <div className="relative border-l-2 border-slate-200 dark:border-slate-800 ml-4 space-y-8">
-             {resource?.history?.length === 0 && (
-                <div className="pl-6 text-slate-500 text-sm italic">No history recorded yet.</div>
-             )}
-             {resource?.history?.map((entry, idx) => (
-                <div key={idx} className="relative pl-6">
-                   <div className="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-slate-200 dark:bg-slate-800 border-2 border-white dark:border-slate-900"></div>
-                   
-                   <div className="flex flex-col gap-1 mb-2">
-                      <div className="flex justify-between items-start">
-                         <span className="text-xs font-bold uppercase tracking-wider text-slate-500">{new Date(entry.timestamp).toLocaleString()}</span>
-                         <Badge variant="neutral">{entry.changeType}</Badge>
-                      </div>
-                      <div className="text-sm font-medium text-slate-800 dark:text-white">
-                         Modified by <span className="text-blue-600 dark:text-blue-400">{entry.actor}</span>
-                      </div>
-                   </div>
+    const formatTime = (ts: Date) => {
+        return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(ts));
+    };
 
-                   <div className="bg-slate-50 dark:bg-slate-900/50 rounded border border-slate-100 dark:border-slate-800 p-3 text-xs">
-                      <div className="grid grid-cols-2 gap-4">
-                         <div>
-                            <div className="mb-1 text-[10px] font-bold text-slate-400 uppercase">Before</div>
-                            <div className="space-y-1">
-                               {Object.entries(entry.previousLabels).map(([k,v]) => (
-                                  <div key={k} className="text-slate-500">{k}: {v}</div>
-                               ))}
-                               {Object.keys(entry.previousLabels).length === 0 && <span className="text-slate-400 italic">Empty</span>}
-                            </div>
-                         </div>
-                         <div className="relative">
-                            <div className="absolute -left-3 top-1/2 -translate-y-1/2 text-slate-300"><ArrowRight className="w-3 h-3" /></div>
-                            <div className="mb-1 text-[10px] font-bold text-slate-400 uppercase">After</div>
-                            <div className="space-y-1">
-                               {Object.entries(entry.newLabels).map(([k,v]) => {
-                                  const isChanged = entry.previousLabels[k] !== v;
-                                  return (
-                                    <div key={k} className={isChanged ? "text-blue-600 dark:text-blue-400 font-semibold" : "text-slate-500"}>
-                                       {k}: {v}
-                                    </div>
-                                  )
-                               })}
-                               {Object.keys(entry.newLabels).length === 0 && <span className="text-slate-400 italic">Empty</span>}
-                            </div>
-                         </div>
-                      </div>
-                   </div>
-                </div>
-             ))}
-          </div>
-       </div>
-    </Modal>
-  );
+    return (
+        <Modal 
+          isOpen={!!resource} 
+          onClose={onClose} 
+          title={`Label History for ${resource.name}`}
+        >
+           <div className="p-2 space-y-8 relative">
+              {/* Timeline Vertical Line */}
+              <div className="absolute left-[28px] top-6 bottom-6 w-0.5 bg-slate-200 dark:bg-slate-800"></div>
+              
+              {(!resource.history || resource.history.length === 0) && (
+                 <div className="text-center py-12 text-slate-500 italic relative z-10 bg-transparent">
+                    <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <History className="w-8 h-8 opacity-50" />
+                    </div>
+                    No label changes recorded for this resource yet.
+                 </div>
+              )}
+
+              {resource.history?.map((entry, i) => (
+                 <div key={i} className="relative z-10 flex gap-4 group">
+                    {/* Timeline Node */}
+                    <div className="shrink-0 pt-1">
+                        <div className={`
+                            w-14 h-14 rounded-full border-4 border-white dark:border-slate-900 shadow-md flex items-center justify-center relative
+                            ${entry.changeType === 'APPLY_PROPOSAL' ? 'bg-violet-100 text-violet-600' : 'bg-blue-100 text-blue-600'}
+                        `}>
+                            {entry.changeType === 'APPLY_PROPOSAL' ? <Wand2 className="w-6 h-6" /> : <GitCommit className="w-6 h-6" />}
+                        </div>
+                    </div>
+
+                    {/* Card Content */}
+                    <div className="flex-1 bg-white dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm hover:shadow-md transition-shadow">
+                       <div className="flex justify-between items-start mb-4 border-b border-slate-100 dark:border-slate-800/50 pb-3">
+                          <div>
+                             <h4 className="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                                {entry.changeType === 'APPLY_PROPOSAL' ? 'AI Auto-Labeling' : 
+                                 entry.changeType === 'REVERT' ? 'Reverted Changes' : 'Manual Update'}
+                             </h4>
+                             <div className="flex items-center gap-3 mt-1.5">
+                                <span className="text-xs text-slate-500 flex items-center gap-1">
+                                    <Clock className="w-3 h-3" /> {formatTime(entry.timestamp)}
+                                </span>
+                                <span className="text-xs text-slate-500 flex items-center gap-1">
+                                    <User className="w-3 h-3" /> {entry.actor}
+                                </span>
+                             </div>
+                          </div>
+                          <Badge variant="neutral">{entry.changeType}</Badge>
+                       </div>
+                       
+                       <div className="space-y-3">
+                          <div className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1.5 tracking-wider">
+                             <FileDiff className="w-3 h-3" /> Changes
+                          </div>
+                          
+                          {/* Label Diffs */}
+                          {Object.keys(entry.newLabels).map(k => {
+                             const oldVal = entry.previousLabels[k];
+                             const newVal = entry.newLabels[k];
+                             if (oldVal === newVal) return null;
+
+                             return (
+                                <div key={k} className="grid grid-cols-[1fr,auto,1fr] gap-2 items-center text-xs p-2 bg-slate-50 dark:bg-slate-950 rounded-lg border border-slate-100 dark:border-slate-800/50">
+                                   <div className="font-mono text-slate-500 break-all text-right pr-2 border-r border-slate-200 dark:border-slate-800">
+                                      {k}
+                                   </div>
+                                   <ArrowRight className="w-3 h-3 text-slate-300" />
+                                   <div className="flex items-center gap-2 overflow-hidden">
+                                      {oldVal ? (
+                                         <span className="line-through text-red-400 opacity-60 truncate max-w-[80px] text-[10px]">{oldVal}</span>
+                                      ) : (
+                                         <span className="text-slate-300 italic text-[10px]">null</span>
+                                      )}
+                                      <span className="text-emerald-600 dark:text-emerald-400 font-bold font-mono truncate">{newVal}</span>
+                                   </div>
+                                </div>
+                             )
+                          })}
+                          
+                          {Object.keys(entry.previousLabels).map(k => {
+                             if (entry.newLabels[k] === undefined) {
+                                return (
+                                   <div key={k} className="grid grid-cols-[1fr,auto,1fr] gap-2 items-center text-xs p-2 bg-red-50/50 dark:bg-red-900/10 rounded-lg border border-red-100 dark:border-red-900/20">
+                                      <div className="font-mono text-slate-500 break-all text-right pr-2 border-r border-red-200 dark:border-red-900/30">
+                                         {k}
+                                      </div>
+                                      <ArrowRight className="w-3 h-3 text-red-300" />
+                                      <span className="text-red-500 italic flex items-center gap-1">
+                                         <Trash2 className="w-3 h-3" /> removed
+                                      </span>
+                                   </div>
+                                )
+                             }
+                             return null;
+                          })}
+                       </div>
+                    </div>
+                 </div>
+              ))}
+           </div>
+        </Modal>
+    );
 };

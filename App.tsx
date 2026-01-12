@@ -34,7 +34,7 @@ const DEFAULT_FILTER_CONFIG: FilterConfig = {
 };
 
 // Enterprise-grade transition with spring physics
-const PageTransition = ({ children }: { children: React.ReactNode }) => (
+const PageTransition: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <motion.div
     initial={{ opacity: 0, y: 20, scale: 0.98 }}
     animate={{ opacity: 1, y: 0, scale: 1 }}

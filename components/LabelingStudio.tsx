@@ -7,17 +7,29 @@ import {
   Tag, Split, Eraser, ArrowRight, Save, X, 
   RefreshCw, Wand2, Plus, Trash2, Regex as RegexIcon,
   Bot, Lightbulb, Check, ChevronRight, AlertTriangle, Code,
-  LayoutTemplate, CheckCircle2, AlertOctagon, HelpCircle
+  LayoutTemplate, CheckCircle2, AlertOctagon, HelpCircle,
+  Replace
 } from 'lucide-react';
-import { Button, Input, Select, Badge, Card, ToggleSwitch } from './DesignSystem';
+import { Button, Input, Select, Badge, Card, ToggleSwitch, Modal } from './DesignSystem';
 import { validateKey, validateValue } from '../utils/validation';
 
 const MODE_INSTRUCTIONS: Record<string, string> = {
   STATIC: "Apply standardized labels to all selected resources. Define key-value pairs (e.g., 'cost-center: cc-123') that will be added or overwritten.",
   PATTERN: "Split resource names by a delimiter (e.g., '-') to extract dynamic values. Map each segment position to a label key.",
   REGEX: "Use regular expressions for advanced extraction. Define a pattern with capture groups (...) and assign a label key to each group index.",
-  CLEANUP: "Bulk remove labels by key. Enter the label keys you wish to delete from the selected resources. This operation cannot be undone."
+  NORMALIZATION: "Standardize label values across your fleet. Define mapping rules (e.g., 'prod' -> 'production') to automatically update any label matching the criteria.",
+  CLEANUP: "Bulk remove labels by key. Select existing keys found on resources or enter manually. This operation cannot be undone."
 };
+
+// Color Palette for Token Mapping Visualization
+const MAPPING_COLORS = [
+  'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/40 dark:text-blue-200 dark:border-blue-800',
+  'bg-purple-100 text-purple-800 border-purple-200 dark:bg-purple-900/40 dark:text-purple-200 dark:border-purple-800',
+  'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-200 dark:border-emerald-800',
+  'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-900/40 dark:text-amber-200 dark:border-amber-800',
+  'bg-pink-100 text-pink-800 border-pink-200 dark:bg-pink-900/40 dark:text-pink-200 dark:border-pink-800',
+  'bg-cyan-100 text-cyan-800 border-cyan-200 dark:bg-cyan-900/40 dark:text-cyan-200 dark:border-cyan-800',
+];
 
 interface LabelingStudioProps {
   isOpen: boolean;
@@ -26,7 +38,7 @@ interface LabelingStudioProps {
   onApply: (updates: Map<string, Record<string, string>>) => void;
 }
 
-type Mode = 'STATIC' | 'PATTERN' | 'REGEX' | 'CLEANUP';
+type Mode = 'STATIC' | 'PATTERN' | 'REGEX' | 'NORMALIZATION' | 'CLEANUP';
 
 export const LabelingStudio: React.FC<LabelingStudioProps> = ({ 
   isOpen, 
@@ -49,6 +61,9 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
   const [regexPattern, setRegexPattern] = useState('^([a-z]+)-([a-z]+)-(\\d+)$');
   const [regexGroups, setRegexGroups] = useState<{index: number, key: string}[]>([{index: 1, key: 'env'}, {index: 2, key: 'app'}]);
 
+  // Normalization Mode State
+  const [normalizationRules, setNormalizationRules] = useState<{from: string, to: string}[]>([{from: '', to: ''}]);
+
   // Cleanup Mode State
   const [keysToRemove, setKeysToRemove] = useState<string[]>(['']);
 
@@ -56,8 +71,23 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
   const sampleName = selectedResources[0]?.name || '';
   const sampleTokens = useMemo(() => sampleName.split(delimiter), [sampleName, delimiter]);
 
+  // Derived for Cleanup Mode (Auto-suggest keys)
+  const availableKeysToRemove = useMemo(() => {
+     const keys = new Set<string>();
+     selectedResources.forEach(r => Object.keys(r.labels).forEach(k => keys.add(k)));
+     return Array.from(keys).sort();
+  }, [selectedResources]);
+
   // Helper to find mapping for a specific index
   const getMappingForIndex = (index: number) => mappings.find(m => m.position === index);
+
+  // Get color for a mapping index
+  const getMappingColor = (index: number) => {
+     // Find which mapping entry this index corresponds to, to assign consistent color based on list order
+     const mappingIdx = mappings.findIndex(m => m.position === index);
+     if (mappingIdx === -1) return 'bg-slate-100 text-slate-500 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'; // Default gray
+     return MAPPING_COLORS[mappingIdx % MAPPING_COLORS.length];
+  };
 
   // --- Logic ---
 
@@ -69,12 +99,14 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
       
       setAiAdvice(result.advice);
       if (result.suggestedMode) {
-        setMode(result.suggestedMode);
+        setMode(result.suggestedMode as Mode);
       }
       
       // Apply Configuration Safely
       if (result.suggestedMode === 'PATTERN' && result.config) {
-        if (result.config.delimiter) setDelimiter(result.config.delimiter);
+        if (result.config.delimiter) {
+            setDelimiter(result.config.delimiter);
+        }
         if (Array.isArray(result.config.mappings) && result.config.mappings.length > 0) {
           setMappings(result.config.mappings);
         }
@@ -104,6 +136,15 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
            return [...prev, { key: k, value: v }];
         });
     }
+  };
+
+  const addKeyToRemove = (key: string) => {
+      setKeysToRemove(prev => {
+          if (prev.includes(key)) return prev;
+          // Filter out empty entries to keep list clean
+          const cleaned = prev.filter(k => k.trim() !== '');
+          return [...cleaned, key];
+      });
   };
 
   const updateMappingPosition = (idx: number, newPos: number) => {
@@ -160,522 +201,387 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
             });
         }
       }
+      else if (mode === 'NORMALIZATION') {
+        Object.entries(newLabels).forEach(([key, value]) => {
+           const rule = normalizationRules.find(rule => rule.from === value);
+           if (rule && rule.to && value !== rule.to) {
+              changes.push(`Normalized ${key}: '${value}' -> '${rule.to}'`);
+              newLabels[key] = rule.to;
+           }
+        });
+      }
       else if (mode === 'CLEANUP') {
-        keysToRemove.forEach(key => {
-          if (key && newLabels[key]) {
-            changes.push(`Removed ${key}`);
-            delete newLabels[key];
-          }
+        keysToRemove.forEach(k => {
+            if (k && newLabels[k] !== undefined) {
+                changes.push(`Removed ${k}`);
+                delete newLabels[k];
+            }
         });
       }
 
       if (changes.length > 0) {
-        updates.set(r.id, {
-          original: r.labels,
-          new: newLabels,
-          changes
-        });
+        updates.set(r.id, { original: r.labels, new: newLabels, changes });
       }
     });
-
+    
     return updates;
-  }, [selectedResources, mode, staticLabels, delimiter, mappings, keysToRemove, regexPattern, regexGroups]);
+  }, [selectedResources, mode, staticLabels, delimiter, mappings, regexPattern, regexGroups, normalizationRules, keysToRemove]);
 
   const handleApply = () => {
-    const payload = new Map<string, Record<string, string>>();
-    previewData.forEach((val, id) => {
-      payload.set(id, val.new);
-    });
-    onApply(payload);
-    onClose();
+     const updates = new Map<string, Record<string, string>>();
+     previewData.forEach((val, key) => {
+         updates.set(key, val.new);
+     });
+     onApply(updates);
+     onClose();
   };
 
-  if (!isOpen) return null;
+  // Determine if config is valid to allow apply
+  const isValid = useMemo(() => {
+    if (mode === 'STATIC') return staticLabels.some(l => l.key && l.value);
+    if (mode === 'PATTERN') return mappings.some(m => m.key);
+    if (mode === 'REGEX') return regexGroups.some(g => g.key);
+    if (mode === 'NORMALIZATION') return normalizationRules.some(r => r.from && r.to);
+    if (mode === 'CLEANUP') return keysToRemove.some(k => k);
+    return false;
+  }, [mode, staticLabels, mappings, regexGroups, normalizationRules, keysToRemove]);
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose} />
-      
-      <div className="relative bg-slate-50 dark:bg-slate-950 w-full max-w-6xl h-[90vh] rounded-2xl shadow-2xl flex overflow-hidden border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 duration-300">
-        
-        {/* Left Sidebar: AI Copilot & Context */}
-        <div className="w-72 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col z-20">
-           <div className="p-6 border-b border-slate-200 dark:border-slate-800">
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                 <Wand2 className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-                 Label Studio
-              </h2>
-              <div className="mt-2 flex items-center gap-2">
-                 <Badge variant="neutral">{selectedResources.length} Resources</Badge>
-              </div>
-           </div>
-           
-           <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {/* AI Card */}
-              <div className="bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 p-4 rounded-xl border border-blue-100 dark:border-blue-500/30">
-                 <div className="flex items-center gap-2 mb-2 text-blue-700 dark:text-blue-300 font-semibold text-sm">
-                    <Bot className="w-4 h-4" /> AI Assistant
-                 </div>
-                 {aiAdvice ? (
-                    <div className="space-y-3">
-                       <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed italic">
-                          "{aiAdvice}"
-                       </p>
-                       <div className="flex items-center gap-2 text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
-                          <CheckCircle2 className="w-3 h-3" /> Config Auto-Applied
-                       </div>
-                       <Button size="xs" variant="secondary" onClick={() => setAiAdvice(null)} className="w-full mt-2">Reset Assistant</Button>
-                    </div>
-                 ) : (
-                    <div className="space-y-3">
-                       <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                          I can analyze your resource names and automatically configure the extraction rules.
-                       </p>
-                       <Button 
-                          size="sm" 
-                          variant="primary" 
-                          className="w-full shadow-md"
-                          onClick={handleAiAnalysis}
-                          isLoading={isAnalyzing}
-                          leftIcon={<Wand2 className="w-3 h-3" />}
-                       >
-                          Auto-Detect Patterns
-                       </Button>
-                    </div>
-                 )}
-              </div>
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Labeling Studio"
+    >
+      <div className="space-y-6">
+         {/* 1. Mode Selector */}
+         <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-lg overflow-x-auto">
+            {(['STATIC', 'PATTERN', 'REGEX', 'NORMALIZATION', 'CLEANUP'] as Mode[]).map(m => (
+               <button
+                  key={m}
+                  onClick={() => setMode(m)}
+                  className={`flex-1 min-w-[80px] py-2 text-[10px] sm:text-xs font-bold rounded-md transition-all flex items-center justify-center gap-1.5 ${mode === m ? 'bg-white dark:bg-slate-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700/50'}`}
+               >
+                  {m === 'STATIC' && <Tag className="w-3 h-3" />}
+                  {m === 'PATTERN' && <Split className="w-3 h-3" />}
+                  {m === 'REGEX' && <RegexIcon className="w-3 h-3" />}
+                  {m === 'NORMALIZATION' && <Replace className="w-3 h-3" />}
+                  {m === 'CLEANUP' && <Eraser className="w-3 h-3" />}
+                  <span className="hidden sm:inline">{m === 'NORMALIZATION' ? 'NORMALIZE' : m}</span>
+                  <span className="sm:hidden">{m === 'NORMALIZATION' ? 'NORM' : m.slice(0,4)}</span>
+               </button>
+            ))}
+         </div>
 
-              {/* Instructions based on selection */}
-              <div className="space-y-3">
-                  <h4 className="text-xs font-bold uppercase text-slate-500 tracking-wider">Dynamic Instructions</h4>
-                  
-                  {/* Mode-specific guidance */}
-                  <div className="bg-blue-50 dark:bg-blue-900/10 p-3 rounded-lg border border-blue-100 dark:border-blue-800 text-xs text-slate-600 dark:text-slate-300 leading-relaxed mb-4 flex gap-2">
-                     <HelpCircle className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
-                     <span>{MODE_INSTRUCTIONS[mode]}</span>
+         {/* 2. AI Assistant (For Pattern/Regex) */}
+         {(mode === 'PATTERN' || mode === 'REGEX') && (
+            <div className="bg-gradient-to-r from-violet-50 to-indigo-50 dark:from-violet-900/10 dark:to-indigo-900/10 rounded-xl p-4 border border-violet-100 dark:border-violet-900/20 relative overflow-hidden">
+               <div className="flex justify-between items-start gap-4">
+                  <div className="flex items-start gap-3">
+                     <div className="p-2 bg-white dark:bg-slate-800 rounded-lg shadow-sm">
+                        <Wand2 className="w-5 h-5 text-violet-500" />
+                     </div>
+                     <div>
+                        <h4 className="font-bold text-slate-800 dark:text-white text-sm">AI Pattern Detector</h4>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Let Gemini analyze your resource names to detect naming conventions.</p>
+                     </div>
                   </div>
-
-                  <div className="text-xs text-slate-600 dark:text-slate-400 space-y-2">
-                     {selectedResources.some(r => r.name.includes('-') || r.name.includes('_')) && (
-                        <div className="flex gap-2 animate-in fade-in">
-                           <div className="mt-0.5 min-w-[16px]"><Split className="w-4 h-4 text-blue-500" /></div>
-                           <p>We detected delimiters in your resource names. <strong>Pattern Extraction</strong> is recommended.</p>
-                        </div>
-                     )}
-                     {selectedResources.some(r => Object.keys(r.labels).length === 0) && (
-                        <div className="flex gap-2 animate-in fade-in">
-                           <div className="mt-0.5 min-w-[16px]"><Tag className="w-4 h-4 text-emerald-500" /></div>
-                           <p>Some resources have no labels. Use <strong>Static Assignment</strong> to set a baseline.</p>
-                        </div>
-                     )}
+                  <Button 
+                     size="sm" 
+                     variant="primary" 
+                     className="bg-violet-600 hover:bg-violet-700 text-white" 
+                     onClick={handleAiAnalysis} 
+                     isLoading={isAnalyzing}
+                     leftIcon={<Bot className="w-4 h-4"/>}
+                  >
+                     Analyze Names
+                  </Button>
+               </div>
+               {aiAdvice && (
+                  <div className="mt-3 pt-3 border-t border-violet-200 dark:border-violet-800 flex gap-2 animate-in fade-in slide-in-from-top-1">
+                     <Lightbulb className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                     <p className="text-xs text-slate-700 dark:text-slate-300 italic">"{aiAdvice}"</p>
                   </div>
-              </div>
-           </div>
-        </div>
+               )}
+            </div>
+         )}
 
-        {/* Main Workspace */}
-        <div className="flex-1 flex flex-col bg-slate-50 dark:bg-slate-950 min-w-0">
-           
-           {/* Navigation Tabs */}
-           <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur flex justify-between items-center">
-              <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-lg">
-                  {[
-                    { id: 'STATIC', icon: Tag, label: 'Static' },
-                    { id: 'PATTERN', icon: Split, label: 'Pattern' },
-                    { id: 'REGEX', icon: RegexIcon, label: 'Regex' },
-                    { id: 'CLEANUP', icon: Eraser, label: 'Cleanup' }
-                  ].map((m) => (
-                    <button
-                      key={m.id}
-                      onClick={() => setMode(m.id as Mode)}
-                      className={`
-                        flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all
-                        ${mode === m.id 
-                          ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' 
-                          : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}
-                      `}
-                    >
-                      <m.icon className="w-4 h-4" />
-                      {m.label}
-                    </button>
-                  ))}
-              </div>
-              <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
-                 <X className="w-6 h-6" />
-              </button>
-           </div>
-
-           <div className="flex-1 flex overflow-hidden">
-              {/* Editor Pane (Middle) */}
-              <div className="w-[45%] border-r border-slate-200 dark:border-slate-800 p-8 overflow-y-auto">
-                 <div className="max-w-md mx-auto space-y-8 animate-in slide-in-from-left-4 duration-300">
-                    
-                    {/* STATIC MODE */}
-                    {mode === 'STATIC' && (
-                      <div className="space-y-6">
-                        <div>
-                           <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Static Labels</h3>
-                           <p className="text-sm text-slate-500 mt-1">Apply specific key-value pairs to every selected resource.</p>
-                        </div>
-                        
-                        <div className="p-4 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                           <div className="mb-4">
-                              <label className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-2 block">Quick Templates</label>
-                              <Select 
-                                 onChange={(e) => { addTemplateToStatic(e.target.value); e.target.value = ''; }} 
-                                 className="text-xs"
-                              >
-                                 <option value="">Load a common label...</option>
-                                 {LABEL_TEMPLATES.map((t, i) => <option key={i} value={`${t.key}::${t.value}`}>{t.label}</option>)}
-                              </Select>
-                           </div>
-
-                           <div className="space-y-3">
-                              {staticLabels.map((lbl, idx) => (
-                                <div key={idx} className="flex gap-2 group items-start">
-                                  <Input 
-                                    placeholder="Key" 
-                                    value={lbl.key} 
-                                    onChange={e => {
-                                      const n = [...staticLabels]; n[idx].key = e.target.value; setStaticLabels(n);
-                                    }} 
-                                    error={validateKey(lbl.key) || undefined}
-                                  />
-                                  <Input 
-                                    placeholder="Value" 
-                                    value={lbl.value} 
-                                    onChange={e => {
-                                      const n = [...staticLabels]; n[idx].value = e.target.value; setStaticLabels(n);
-                                    }} 
-                                    error={validateValue(lbl.value) || undefined}
-                                  />
-                                  <button onClick={() => setStaticLabels(staticLabels.filter((_, i) => i !== idx))} className="text-slate-300 hover:text-red-500 transition-colors mt-2">
-                                    <Trash2 className="w-5 h-5" />
-                                  </button>
-                                </div>
-                              ))}
-                              <Button variant="ghost" className="w-full border-dashed border-slate-300 dark:border-slate-700" onClick={() => setStaticLabels([...staticLabels, {key:'', value:''}])} leftIcon={<Plus className="w-4 h-4"/>}>Add Label</Button>
-                           </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* PATTERN MODE */}
-                    {mode === 'PATTERN' && (
-                      <div className="space-y-6">
-                        <div>
-                           <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Pattern Extraction</h3>
-                           <p className="text-sm text-slate-500 mt-1">Split resource names by a delimiter and map segments to labels.</p>
-                        </div>
-                        
-                        <div className="p-4 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
-                           <div>
-                              <label className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-2 block">Separator</label>
-                              <div className="flex gap-4">
-                                 {['-', '_', '.'].map(char => (
-                                    <button 
-                                       key={char} 
-                                       onClick={() => setDelimiter(char)}
-                                       className={`flex-1 py-2 rounded-lg border font-mono text-lg font-bold transition-all ${delimiter === char ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-500 text-blue-600' : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-400'}`}
-                                    >
-                                       {char}
-                                    </button>
-                                 ))}
-                              </div>
-                           </div>
-                           
-                           {/* Visual Preview of Tokens */}
-                           <div className="bg-slate-100 dark:bg-slate-950/50 p-4 rounded-lg border border-slate-200 dark:border-slate-800">
-                             <div className="text-[10px] uppercase font-bold text-slate-400 mb-2">Token Preview (First Resource)</div>
-                             <div className="flex flex-wrap gap-2">
-                               {sampleTokens.map((token, idx) => {
-                                 const mapping = getMappingForIndex(idx);
-                                 return (
-                                   <div key={idx} className="flex flex-col items-center min-w-[30px] animate-in fade-in zoom-in-95 duration-300">
-                                      <span className="text-[9px] text-slate-400 font-mono mb-1">{idx + 1}</span>
-                                      <Badge 
-                                        variant={mapping ? 'info' : 'neutral'} 
-                                        className={`font-mono text-xs px-2 py-1 transition-all ${mapping ? 'ring-2 ring-blue-500/20 shadow-sm scale-105' : 'opacity-70'}`}
-                                      >
-                                        {token}
-                                      </Badge>
-                                      {mapping ? (
-                                        <div className="mt-1 flex flex-col items-center animate-in slide-in-from-top-1">
-                                            <div className="w-px h-2 bg-blue-300 dark:bg-blue-700"></div>
-                                            <span className="text-[9px] font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 px-1.5 py-0.5 rounded border border-blue-100 dark:border-blue-800">{mapping.key}</span>
-                                        </div>
-                                      ) : (
-                                        <div className="h-6"></div> // Spacer to keep alignment
-                                      )}
-                                   </div>
-                                 );
-                               })}
-                             </div>
-                           </div>
-
-                           <div className="space-y-3">
-                              <label className="text-xs text-slate-500 font-bold uppercase tracking-wider block">Positional Mappings</label>
-                              {mappings.map((map, idx) => (
-                                <div key={idx} className="flex items-start gap-3 p-3 bg-slate-50 dark:bg-slate-950 rounded-lg border border-slate-100 dark:border-slate-800 animate-in slide-in-from-left-2">
-                                  {/* Position Selector */}
-                                  <div className="flex flex-col w-12 pt-1">
-                                     <label className="text-[9px] uppercase font-bold text-slate-400 mb-0.5">Pos</label>
-                                     <input 
-                                        type="number" 
-                                        min="1" 
-                                        max={Math.max(sampleTokens.length, 10)}
-                                        value={map.position + 1}
-                                        onChange={e => updateMappingPosition(idx, parseInt(e.target.value) - 1)}
-                                        className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded px-1 py-1 text-center text-xs font-mono focus:ring-2 focus:ring-blue-500 outline-none"
-                                     />
-                                  </div>
-
-                                  {/* Live Token Preview */}
-                                  <div className="flex flex-col items-center px-3 border-l border-r border-slate-200 dark:border-slate-800 mx-1 min-w-[80px] pt-1">
-                                     <span className="text-[9px] uppercase font-bold text-slate-400 mb-0.5">Value</span>
-                                     <span className="font-mono text-xs font-semibold text-slate-700 dark:text-slate-300 truncate max-w-[80px]" title={sampleTokens[map.position] || ''}>
-                                        {sampleTokens[map.position] || <span className="text-slate-300 italic">-</span>}
-                                     </span>
-                                  </div>
-
-                                  <div className="pt-3"><ArrowRight className="w-4 h-4 text-slate-300" /></div>
-                                  
-                                  <Input 
-                                    placeholder="Target Label Key" 
-                                    value={map.key} 
-                                    onChange={e => {
-                                       const n = [...mappings]; n[idx].key = e.target.value; setMappings(n);
-                                    }} 
-                                    className="flex-1"
-                                    error={validateKey(map.key) || undefined}
-                                  />
-                                  
-                                  <button onClick={() => setMappings(mappings.filter((_, i) => i !== idx))} className="text-slate-300 hover:text-red-500 transition-colors p-1 mt-2"><Trash2 className="w-4 h-4" /></button>
-                                </div>
-                              ))}
-                              <Button variant="ghost" size="sm" onClick={() => setMappings([...mappings, {position: mappings.length, key: ''}])} leftIcon={<Plus className="w-3 h-3"/>}>Add Mapping</Button>
-                           </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* REGEX MODE */}
-                    {mode === 'REGEX' && (
-                       <div className="space-y-6">
-                          <div>
-                             <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Regex Capture</h3>
-                             <p className="text-sm text-slate-500 mt-1">Use Regular Expressions to extract complex substrings.</p>
-                          </div>
-                          
-                          <div className="p-4 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
-                             <div>
-                                <label className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-2 block flex justify-between">
-                                   Pattern 
-                                   <a href="https://regex101.com" target="_blank" rel="noreferrer" className="text-blue-500 hover:underline flex items-center gap-1 normal-case font-normal"><Code className="w-3 h-3"/> Test Regex</a>
-                                </label>
-                                <Input 
-                                   value={regexPattern} 
-                                   onChange={(e) => setRegexPattern(e.target.value)} 
-                                   className="font-mono text-sm"
-                                   placeholder="^([a-z]+)-(\d+)$"
-                                />
-                             </div>
-
-                             <div className="space-y-3">
-                                <label className="text-xs text-slate-500 font-bold uppercase tracking-wider block">Capture Groups</label>
-                                {regexGroups.map((group, idx) => (
-                                  <div key={idx} className="flex items-start gap-3 p-3 bg-slate-50 dark:bg-slate-950 rounded-lg border border-slate-100 dark:border-slate-800">
-                                    <div className="flex flex-col items-center min-w-[3rem]">
-                                       <span className="text-[10px] text-slate-400 font-bold uppercase">Group</span>
-                                       <span className="text-lg font-mono font-bold text-slate-700 dark:text-slate-300">${group.index}</span>
-                                    </div>
-                                    <div className="pt-3"><ArrowRight className="w-4 h-4 text-slate-300" /></div>
-                                    <Input 
-                                      placeholder="Target Label Key" 
-                                      value={group.key} 
-                                      onChange={e => {
-                                         const n = [...regexGroups]; n[idx].key = e.target.value; setRegexGroups(n);
-                                      }} 
-                                      className="flex-1"
-                                      error={validateKey(group.key) || undefined}
-                                    />
-                                    <button onClick={() => setRegexGroups(regexGroups.filter((_, i) => i !== idx))} className="text-slate-300 hover:text-red-500 mt-2"><Trash2 className="w-4 h-4" /></button>
-                                  </div>
-                                ))}
-                                <Button variant="ghost" size="sm" onClick={() => setRegexGroups([...regexGroups, {index: regexGroups.length + 1, key: ''}])} leftIcon={<Plus className="w-3 h-3"/>}>Add Group</Button>
-                             </div>
-                          </div>
-                       </div>
-                    )}
-
-                    {/* CLEANUP MODE */}
-                    {mode === 'CLEANUP' && (
-                       <div className="space-y-6">
-                         <div>
-                            <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Bulk Cleanup</h3>
-                            <p className="text-sm text-slate-500 mt-1">Remove specific deprecated labels from all resources.</p>
-                         </div>
-                         
-                         <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/30 p-4 rounded-lg flex gap-3">
-                            <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-500 shrink-0" />
-                            <div className="text-sm text-amber-800 dark:text-amber-200/80 leading-relaxed">
-                                <strong>Caution:</strong> Removing labels is irreversible. Ensure these keys are no longer needed for billing or compliance policies.
-                            </div>
-                         </div>
-
-                         <div className="p-4 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
-                            <label className="text-xs text-slate-500 font-bold uppercase tracking-wider block">Keys to Remove</label>
-                            
-                            {/* Common Keys Quick Add */}
-                            <div className="flex flex-wrap gap-2 mb-2">
-                                {['temp', 'temporary', 'test', 'debug', 'owner', 'created-by'].map(k => (
-                                    <button
-                                        key={k}
-                                        onClick={() => !keysToRemove.includes(k) && setKeysToRemove([...keysToRemove, k])}
-                                        className="text-[10px] px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-500 transition-colors"
-                                    >
-                                        + {k}
-                                    </button>
-                                ))}
-                            </div>
-
-                            {keysToRemove.map((k, idx) => (
-                              <div key={idx} className="flex gap-2 group items-start">
-                                 <div className="relative flex-1">
-                                     <Tag className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
-                                     <Input 
-                                        placeholder="Label Key to Remove" 
-                                        value={k} 
-                                        onChange={e => {
-                                            const n = [...keysToRemove]; n[idx] = e.target.value; setKeysToRemove(n);
-                                        }} 
-                                        className="pl-9"
-                                        error={validateKey(k) || undefined}
-                                     />
-                                 </div>
-                                 <button 
-                                    onClick={() => setKeysToRemove(keysToRemove.filter((_, i) => i !== idx))} 
-                                    className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors mt-0.5"
-                                >
-                                    <Trash2 className="w-5 h-5" />
-                                 </button>
-                              </div>
-                            ))}
-                            <Button 
-                                variant="ghost" 
-                                className="w-full border-dashed border-slate-300 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200" 
-                                onClick={() => setKeysToRemove([...keysToRemove, ''])} 
-                                leftIcon={<Plus className="w-4 h-4"/>}
-                            >
-                                Add Key to Remove
-                            </Button>
-                         </div>
-                       </div>
-                    )}
+         {/* 3. Configuration Form */}
+         <Card className="bg-slate-50 dark:bg-slate-950/30 border-slate-200 dark:border-slate-800">
+             <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                 <h4 className="font-bold text-sm text-slate-700 dark:text-slate-200 uppercase tracking-wide flex items-center gap-2">
+                     <Code className="w-4 h-4" /> Configuration
+                 </h4>
+                 <div className="text-[10px] text-slate-500 bg-white dark:bg-slate-900 px-2 py-1 rounded border border-slate-200 dark:border-slate-800 hidden sm:block">
+                    {MODE_INSTRUCTIONS[mode].split('.')[0]}.
                  </div>
-              </div>
-
-              {/* Preview Pane (Right) */}
-              <div className="flex-1 bg-slate-100 dark:bg-black/20 flex flex-col min-w-0">
-                 <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur flex justify-between items-center">
-                    <h3 className="text-xs font-bold uppercase text-slate-500 tracking-wider flex items-center gap-2">
-                      <RefreshCw className="w-3.5 h-3.5" /> Impact Simulation
-                    </h3>
-                    <div className="flex gap-2">
-                       <Badge variant="info">{previewData.size} Affected</Badge>
-                       {selectedResources.length - previewData.size > 0 && <Badge variant="neutral">{selectedResources.length - previewData.size} Unchanged</Badge>}
+             </div>
+             
+             <div className="p-5">
+                {/* STATIC CONFIG */}
+                {mode === 'STATIC' && (
+                    <div className="space-y-3">
+                        {staticLabels.map((l, idx) => (
+                           <div key={idx} className="flex gap-2 items-center">
+                              <Input placeholder="Key" value={l.key} onChange={e => { const n = [...staticLabels]; n[idx].key = e.target.value; setStaticLabels(n); }} className="font-mono text-xs" />
+                              <span className="text-slate-400">=</span>
+                              <Input placeholder="Value" value={l.value} onChange={e => { const n = [...staticLabels]; n[idx].value = e.target.value; setStaticLabels(n); }} className="font-mono text-xs" />
+                              <button onClick={() => setStaticLabels(p => p.filter((_, i) => i !== idx))} className="text-slate-400 hover:text-red-500 p-2"><Trash2 className="w-4 h-4"/></button>
+                           </div>
+                        ))}
+                        <div className="flex gap-2">
+                           <Button size="xs" variant="ghost" onClick={() => setStaticLabels(p => [...p, {key:'', value:''}])} leftIcon={<Plus className="w-3 h-3"/>}>Add Field</Button>
+                           <Select className="w-32 h-7 py-1 text-xs" onChange={(e) => { addTemplateToStatic(e.target.value); e.target.value=''; }}>
+                               <option value="">Templates...</option>
+                               {LABEL_TEMPLATES.map(t => <option key={t.key} value={`${t.key}::${t.value}`}>{t.label}</option>)}
+                           </Select>
+                        </div>
                     </div>
-                 </div>
+                )}
 
-                 <div className="flex-1 overflow-y-auto p-6 space-y-4">
-                    {previewData.size === 0 ? (
-                      <div className="h-full flex flex-col items-center justify-center text-slate-400 opacity-60">
-                        <Wand2 className="w-16 h-16 mb-4 stroke-[1]" />
-                        <p className="font-medium">Configure rules to see live preview</p>
-                        <p className="text-sm mt-2">Changes will appear here before you commit.</p>
-                      </div>
-                    ) : (
-                      Array.from(previewData.entries()).map(([id, data]) => {
-                        const resource = selectedResources.find(r => r.id === id);
-                        if (!resource) return null;
-                        return (
-                          <div key={id} className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm hover:shadow-md transition-shadow">
-                            <div className="flex justify-between items-start mb-4">
-                               <div className="flex items-center gap-3">
-                                  <div className="font-bold text-slate-800 dark:text-slate-200">{resource.name}</div>
-                                  <div className="text-xs text-slate-500 font-mono bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">{resource.id}</div>
-                               </div>
-                               <div className="flex flex-wrap gap-1 justify-end max-w-[40%]">
-                                 {data.changes.map((change, i) => {
-                                    const isRemoval = change.startsWith('Removed');
+                {/* PATTERN CONFIG */}
+                {mode === 'PATTERN' && (
+                    <div className="space-y-6">
+                        <div className="flex items-center gap-4">
+                           <div className="w-32">
+                              <label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Delimiter</label>
+                              <Input value={delimiter} onChange={e => setDelimiter(e.target.value)} className="font-mono text-center font-bold" />
+                           </div>
+                           <div className="flex-1 bg-slate-100 dark:bg-slate-900 p-3 rounded-lg border border-slate-200 dark:border-slate-800 overflow-x-auto">
+                              <label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Preview Tokenization</label>
+                              <div className="flex gap-1.5 pb-1">
+                                 {sampleTokens.map((token, idx) => {
+                                    const mapping = getMappingForIndex(idx);
                                     return (
-                                       <Badge 
-                                          key={i} 
-                                          variant={isRemoval ? 'error' : 'success'} 
-                                          className={`text-[10px] ${isRemoval ? 'border-red-200 dark:border-red-800' : 'border-emerald-200 dark:border-emerald-800'}`}
-                                       >
-                                          {change}
-                                       </Badge>
-                                    );
+                                        <div key={idx} className={`px-2 py-1.5 rounded text-xs font-mono border flex flex-col items-center min-w-[40px] transition-colors ${getMappingColor(idx)}`}>
+                                            <span className="opacity-50 text-[9px] block mb-0.5">#{idx}</span>
+                                            <span className="font-bold">{token}</span>
+                                            {mapping && mapping.key && (
+                                                <div className="mt-1.5 pt-1 border-t border-current w-full text-center opacity-90 text-[9px] font-bold truncate max-w-[80px]">
+                                                    {mapping.key}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )
                                  })}
-                               </div>
-                            </div>
-                            
-                            <div className="flex items-stretch text-xs rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800">
-                              <div className="flex-1 p-3 bg-slate-50 dark:bg-slate-950/50 border-r border-slate-200 dark:border-slate-800 relative">
-                                <div className="absolute top-2 right-2 text-[9px] font-bold text-slate-400 uppercase tracking-widest">Original</div>
-                                <div className="flex flex-wrap gap-1.5 mt-2">
-                                  {Object.entries(data.original).map(([k,v]) => (
-                                     <span key={k} className="px-1.5 py-0.5 border border-slate-200 dark:border-slate-700 rounded text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-900">{k}:{v}</span>
-                                  ))}
-                                  {Object.keys(data.original).length === 0 && <span className="text-slate-400 italic">No labels</span>}
-                                </div>
                               </div>
-                              <div className="w-8 flex items-center justify-center bg-slate-100 dark:bg-slate-800 text-slate-400">
-                                 <ArrowRight className="w-4 h-4" />
+                           </div>
+                        </div>
+                        
+                        <div className="space-y-2">
+                           <label className="text-[10px] uppercase font-bold text-slate-500 block">Mapping Rules</label>
+                           {mappings.map((m, idx) => (
+                              <div key={idx} className="flex gap-2 items-center">
+                                 <span className="text-xs text-slate-500 font-mono w-8">Pos:</span>
+                                 <Input 
+                                    type="number" 
+                                    value={m.position} 
+                                    onChange={e => updateMappingPosition(idx, parseInt(e.target.value))} 
+                                    className="w-16 text-center font-mono text-xs" 
+                                 />
+                                 <ArrowRight className="w-3 h-3 text-slate-400" />
+                                 <Input 
+                                    placeholder="Target Label Key (e.g. environment)" 
+                                    value={m.key} 
+                                    onChange={e => { const n = [...mappings]; n[idx].key = e.target.value; setMappings(n); }} 
+                                    className={`flex-1 font-mono text-xs ${getMappingColor(m.position)}`}
+                                 />
+                                 <button onClick={() => setMappings(p => p.filter((_, i) => i !== idx))} className="text-slate-400 hover:text-red-500 p-2"><Trash2 className="w-4 h-4"/></button>
                               </div>
-                              <div className="flex-1 p-3 bg-blue-50/30 dark:bg-blue-900/10 relative">
-                                <div className="absolute top-2 right-2 text-[9px] font-bold text-blue-500 uppercase tracking-widest">Result</div>
-                                <div className="flex flex-wrap gap-1.5 mt-2">
-                                  {Object.entries(data.new).map(([k,v]) => {
-                                     const isNew = data.original[k] !== v;
-                                     return (
-                                       <span key={k} className={`px-1.5 py-0.5 rounded border shadow-sm ${isNew ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-700 font-semibold' : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'}`}>
-                                          {k}:{v}
-                                       </span>
-                                     )
-                                  })}
-                                  {Object.keys(data.new).length === 0 && <span className="text-slate-400 italic">No labels</span>}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })
-                    )}
-                 </div>
-                 
-                 <div className="p-5 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex justify-between items-center shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-10">
-                    <div className="text-xs text-slate-500">
-                       <strong>Safe Mode:</strong> No changes are applied until you confirm.
+                           ))}
+                           <Button size="xs" variant="ghost" onClick={() => setMappings(p => [...p, {position: p.length, key: ''}])} leftIcon={<Plus className="w-3 h-3"/>}>Add Mapping</Button>
+                        </div>
                     </div>
-                    <div className="flex gap-3">
-                       <Button variant="secondary" onClick={onClose}>Cancel</Button>
-                       <Button 
-                         variant="primary" 
-                         onClick={handleApply} 
-                         disabled={previewData.size === 0}
-                         leftIcon={<Save className="w-4 h-4" />}
-                         className="px-6"
-                       >
-                         Commit {previewData.size} Updates
-                       </Button>
+                )}
+
+                {/* REGEX CONFIG */}
+                {mode === 'REGEX' && (
+                    <div className="space-y-4">
+                        <div>
+                           <label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Regex Pattern</label>
+                           <Input 
+                              value={regexPattern} 
+                              onChange={e => setRegexPattern(e.target.value)} 
+                              className="font-mono text-sm tracking-wide bg-slate-100 dark:bg-slate-900" 
+                           />
+                        </div>
+                        <div className="space-y-2">
+                           <label className="text-[10px] uppercase font-bold text-slate-500 block">Capture Groups</label>
+                           {regexGroups.map((g, idx) => (
+                              <div key={idx} className="flex gap-2 items-center">
+                                 <span className="text-xs text-slate-500 font-mono w-12">Group:</span>
+                                 <Input 
+                                    type="number" 
+                                    value={g.index} 
+                                    onChange={e => { const n = [...regexGroups]; n[idx].index = parseInt(e.target.value); setRegexGroups(n); }} 
+                                    className="w-16 text-center font-mono text-xs" 
+                                 />
+                                 <ArrowRight className="w-3 h-3 text-slate-400" />
+                                 <Input 
+                                    placeholder="Label Key" 
+                                    value={g.key} 
+                                    onChange={e => { const n = [...regexGroups]; n[idx].key = e.target.value; setRegexGroups(n); }} 
+                                    className="flex-1 font-mono text-xs"
+                                 />
+                                 <button onClick={() => setRegexGroups(p => p.filter((_, i) => i !== idx))} className="text-slate-400 hover:text-red-500 p-2"><Trash2 className="w-4 h-4"/></button>
+                              </div>
+                           ))}
+                           <Button size="xs" variant="ghost" onClick={() => setRegexGroups(p => [...p, {index: p.length + 1, key: ''}])} leftIcon={<Plus className="w-3 h-3"/>}>Add Group</Button>
+                        </div>
                     </div>
-                 </div>
-              </div>
-           </div>
-        </div>
+                )}
+
+                {/* NORMALIZATION CONFIG */}
+                {mode === 'NORMALIZATION' && (
+                    <div className="space-y-3">
+                        <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg flex items-start gap-3 text-sm text-blue-800 dark:text-blue-300 border border-blue-100 dark:border-blue-900/30">
+                           <Replace className="w-5 h-5 shrink-0 mt-0.5" />
+                           <p>Value Replacement Rules: If any label has the value in the <strong>From</strong> field, it will be updated to the <strong>To</strong> field.</p>
+                        </div>
+                        {normalizationRules.map((rule, idx) => (
+                           <div key={idx} className="flex gap-2 items-center">
+                              <Input 
+                                 placeholder="From (e.g. 'prod')" 
+                                 value={rule.from} 
+                                 onChange={e => { const n = [...normalizationRules]; n[idx].from = e.target.value; setNormalizationRules(n); }} 
+                                 className="font-mono text-xs"
+                              />
+                              <ArrowRight className="w-4 h-4 text-slate-400" />
+                              <Input 
+                                 placeholder="To (e.g. 'production')" 
+                                 value={rule.to} 
+                                 onChange={e => { const n = [...normalizationRules]; n[idx].to = e.target.value; setNormalizationRules(n); }} 
+                                 className="font-mono text-xs" 
+                              />
+                              <button onClick={() => setNormalizationRules(p => p.filter((_, i) => i !== idx))} className="text-slate-400 hover:text-red-500 p-2"><Trash2 className="w-4 h-4"/></button>
+                           </div>
+                        ))}
+                        <Button size="xs" variant="ghost" onClick={() => setNormalizationRules(p => [...p, {from: '', to: ''}])} leftIcon={<Plus className="w-3 h-3"/>}>Add Rule</Button>
+                    </div>
+                )}
+
+                {/* CLEANUP CONFIG */}
+                {mode === 'CLEANUP' && (
+                    <div className="space-y-4">
+                        <div className="bg-red-50 dark:bg-red-900/20 p-3 rounded-lg flex items-center gap-3 text-sm text-red-800 dark:text-red-300 border border-red-100 dark:border-red-900/30">
+                           <AlertTriangle className="w-5 h-5" />
+                           <span>Warning: Labels listed below will be permanently removed from all {selectedResources.length} selected resources.</span>
+                        </div>
+                        
+                        {/* Quick Select Chips */}
+                        <div>
+                           <label className="text-[10px] uppercase font-bold text-slate-500 mb-2 block tracking-wider">Quick Select Existing Keys</label>
+                           <div className="flex flex-wrap gap-2 p-3 bg-slate-100 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 max-h-32 overflow-y-auto custom-scrollbar">
+                              {availableKeysToRemove.length === 0 && <span className="text-xs text-slate-400 italic">No labels found on selected resources.</span>}
+                              {availableKeysToRemove.map(k => (
+                                 <button 
+                                    key={k}
+                                    onClick={() => {
+                                        if(!keysToRemove.includes(k)) {
+                                            setKeysToRemove(prev => [...prev.filter(i => i.trim() !== ''), k]);
+                                        }
+                                    }}
+                                    disabled={keysToRemove.includes(k)}
+                                    className={`px-2 py-1 text-xs rounded border transition-colors ${
+                                        keysToRemove.includes(k) 
+                                        ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 border-transparent cursor-not-allowed line-through decoration-red-500' 
+                                        : 'bg-white dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-blue-300'
+                                    }`}
+                                 >
+                                    {k}
+                                 </button>
+                              ))}
+                           </div>
+                        </div>
+
+                        <div className="space-y-2">
+                           <label className="text-[10px] uppercase font-bold text-slate-500 block">Keys to Remove</label>
+                           {keysToRemove.map((k, idx) => (
+                              <div key={idx} className="flex gap-2 items-center">
+                                 <Input 
+                                    placeholder="Label Key to Remove" 
+                                    value={k} 
+                                    onChange={e => { const n = [...keysToRemove]; n[idx] = e.target.value; setKeysToRemove(n); }} 
+                                    className="font-mono text-xs border-red-200 focus:border-red-500 focus:ring-red-500/20" 
+                                 />
+                                 <button onClick={() => setKeysToRemove(p => p.filter((_, i) => i !== idx))} className="text-slate-400 hover:text-red-500 p-2"><Trash2 className="w-4 h-4"/></button>
+                              </div>
+                           ))}
+                           <Button size="xs" variant="ghost" onClick={() => setKeysToRemove(p => [...p, ''])} leftIcon={<Plus className="w-3 h-3"/>}>Add Key</Button>
+                        </div>
+                    </div>
+                )}
+             </div>
+         </Card>
+
+         {/* 4. Live Preview */}
+         <div className="space-y-2">
+            <div className="flex justify-between items-center">
+               <h4 className="font-bold text-slate-700 dark:text-slate-300 text-sm">
+                  Preview Changes ({previewData.size} resources affected)
+               </h4>
+            </div>
+            <div className="border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-900 overflow-hidden max-h-60 overflow-y-auto">
+               <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-950 text-slate-500 font-bold uppercase sticky top-0">
+                     <tr>
+                        <th className="px-4 py-2 w-1/3">Resource</th>
+                        <th className="px-4 py-2">Planned Changes</th>
+                     </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                     {selectedResources.slice(0, 10).map(r => {
+                        const change = previewData.get(r.id);
+                        return (
+                           <tr key={r.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                              <td className="px-4 py-2 font-mono text-slate-700 dark:text-slate-300 truncate max-w-[150px]" title={r.name}>
+                                 {r.name}
+                              </td>
+                              <td className="px-4 py-2">
+                                 {change ? (
+                                    <div className="flex flex-col gap-1">
+                                       {change.changes.map((c, i) => (
+                                          <div key={i} className={`flex items-center gap-1 ${mode === 'CLEANUP' ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                                             {mode === 'CLEANUP' ? <Eraser className="w-3 h-3" /> : <Plus className="w-3 h-3" />} {c}
+                                          </div>
+                                       ))}
+                                    </div>
+                                 ) : (
+                                    <span className="text-slate-400 italic">No changes</span>
+                                 )}
+                              </td>
+                           </tr>
+                        )
+                     })}
+                     {selectedResources.length > 10 && (
+                        <tr>
+                           <td colSpan={2} className="px-4 py-2 text-center text-slate-400 italic bg-slate-50 dark:bg-slate-950">
+                              ...and {selectedResources.length - 10} more
+                           </td>
+                        </tr>
+                     )}
+                  </tbody>
+               </table>
+            </div>
+         </div>
       </div>
-    </div>
+
+      <div className="mt-6 flex justify-between gap-3 border-t border-slate-200 dark:border-slate-800 pt-4">
+         <div className="text-xs text-slate-500 flex items-center gap-1">
+            <AlertOctagon className="w-3 h-3" />
+            Changes are applied immediately.
+         </div>
+         <div className="flex gap-3">
+             <Button variant="ghost" onClick={onClose}>Cancel</Button>
+             <Button 
+                variant={mode === 'CLEANUP' ? 'danger' : 'primary'}
+                onClick={handleApply} 
+                disabled={!isValid || previewData.size === 0}
+                leftIcon={mode === 'CLEANUP' ? <Trash2 className="w-4 h-4"/> : <CheckCircle2 className="w-4 h-4"/>}
+             >
+                {mode === 'CLEANUP' ? 'Delete Labels' : 'Apply Changes'} ({previewData.size})
+             </Button>
+         </div>
+      </div>
+    </Modal>
   );
 };

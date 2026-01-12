@@ -5,6 +5,7 @@ import { fetchAllResources, updateResourceLabels as updateResourceLabelsApi } fr
 import { analyzeResourceBatch, generateComplianceReport } from '../services/geminiService';
 import { generateMockResources } from '../services/mockService';
 import { persistenceService } from '../services/persistenceService';
+import { batchNormalizeResources, NormalizationMap } from '../services/normalizationService';
 
 export const useResourceManager = (
   addLog: (msg: string, level?: string) => void,
@@ -322,6 +323,45 @@ export const useResourceManager = (
      addNotification(`Batch complete. ${successCount} updated.`, failedCount > 0 ? 'error' : 'success');
   }, [resources, addLog, addNotification]);
 
+  // NEW: Normalization Capability
+  const normalizeLabels = useCallback(async (map: NormalizationMap) => {
+    if (!currentCredentials.current) return;
+    const { projectId, accessToken } = currentCredentials.current;
+
+    addLog('Starting batch normalization...', 'INFO');
+    addNotification('Normalizing labels...', 'info');
+
+    // 1. Optimistic Update (mark potential targets as updating)
+    // NOTE: This logic assumes simple value check; detailed check is inside service
+    // To keep UI responsive, we might just set global loading or rely on fast service execution
+    
+    try {
+      const results = await batchNormalizeResources(resources, map, projectId, accessToken);
+      const successful = results.filter(r => r.success && !r.skipped);
+      
+      // Update state with results
+      setResources(prev => prev.map(r => {
+        const res = successful.find(s => s.id === r.id);
+        if (res && res.newLabels) {
+          return { ...r, labels: res.newLabels, isDirty: true };
+        }
+        return r;
+      }));
+
+      const count = successful.length;
+      if (count > 0) {
+        addLog(`Normalization complete. ${count} resources updated.`, 'SUCCESS');
+        addNotification(`Normalization complete. ${count} updated.`, 'success');
+      } else {
+        addLog('Normalization complete. No matching labels found.', 'INFO');
+        addNotification('No resources needed normalization.', 'info');
+      }
+    } catch (e: any) {
+      addLog(`Normalization error: ${e.message}`, 'ERROR');
+      addNotification('Normalization failed.', 'error');
+    }
+  }, [resources, addLog, addNotification]);
+
   const revertResource = useCallback((resourceId: string) => {
     setResources(prev => prev.map(r => {
       if (r.id === resourceId) {
@@ -347,6 +387,7 @@ export const useResourceManager = (
     analyzeResources,
     updateResourceLabels,
     bulkUpdateLabels,
+    normalizeLabels,
     revertResource,
     clearReport
   };

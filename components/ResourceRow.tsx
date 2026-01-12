@@ -7,12 +7,12 @@ import {
   Trash2, Plus, ArrowRight, Copy, History, 
   CheckSquare, Square, ChevronDown, ChevronRight,
   Cpu, Tag, Globe, Network, Fingerprint, Database,
-  Image as ImageIcon, Camera, Cloud, GripVertical, AlertCircle, PlayCircle, StopCircle
+  Image as ImageIcon, Camera, Cloud, GripVertical, AlertCircle, PlayCircle, StopCircle, Box
 } from 'lucide-react';
-import { Button, Input, Select, Badge, Tooltip } from './DesignSystem';
+import { Button, Input, Select, Badge, Tooltip, Spinner } from './DesignSystem';
 import { validateKey, validateValue } from '../utils/validation';
 import { RegionIcon } from './RegionIcon';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface ResourceRowProps {
   resource: GceResource;
@@ -41,15 +41,12 @@ export const ResourceRow = React.memo(({
   const dragOverItem = useRef<number | null>(null);
 
   // Derived State
-  const isVM = resource.type === 'INSTANCE';
   const hasProposed = resource.proposedLabels && Object.keys(resource.proposedLabels).length > 0;
   const isFormValid = useMemo(() => editForm.every(l => !validateKey(l.key) && !validateValue(l.value)), [editForm]);
   const labelCount = Object.keys(resource.labels).length;
   const isCompliant = labelCount > 0;
   const hasHistory = resource.history && resource.history.length > 0;
   
-  const hasPublicIp = resource.ips?.some(ip => !!ip.external);
-
   const timeAgo = useMemo(() => {
     const date = new Date(resource.creationTimestamp);
     const now = new Date();
@@ -136,6 +133,7 @@ export const ResourceRow = React.memo(({
           case 'SNAPSHOT': return Camera;
           case 'CLOUD_RUN': return Cloud;
           case 'CLOUD_SQL': return Database;
+          case 'BUCKET': return Box;
           default: return Server;
       }
   };
@@ -149,27 +147,151 @@ export const ResourceRow = React.memo(({
           case 'SNAPSHOT': return 'bg-cyan-100 text-cyan-600 dark:bg-cyan-500/20 dark:text-cyan-300';
           case 'CLOUD_RUN': return 'bg-indigo-100 text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-300';
           case 'CLOUD_SQL': return 'bg-orange-100 text-orange-600 dark:bg-orange-500/20 dark:text-orange-300';
+          case 'BUCKET': return 'bg-yellow-100 text-yellow-600 dark:bg-yellow-500/20 dark:text-yellow-300';
           default: return 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400';
       }
   };
 
   const getFullTypeName = () => {
       switch(resource.type) {
-          case 'INSTANCE': return 'Virtual Machine Instance';
+          case 'INSTANCE': return 'Virtual Machine';
           case 'DISK': return 'Persistent Disk';
           case 'IMAGE': return 'Machine Image';
           case 'SNAPSHOT': return 'Disk Snapshot';
           case 'CLOUD_RUN': return 'Cloud Run Service';
-          case 'CLOUD_SQL': return 'Cloud SQL Database Instance';
+          case 'CLOUD_SQL': return 'Cloud SQL Instance';
+          case 'BUCKET': return 'Storage Bucket';
           default: return resource.type;
       }
   };
 
   const statusColor = resource.status === 'RUNNING' || resource.status === 'READY' || resource.status === 'RUNNABLE'
     ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20' 
-    : resource.status === 'STOPPED' 
+    : resource.status === 'STOPPED' || resource.status === 'TERMINATED'
       ? 'text-slate-600 bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700' 
       : 'text-amber-700 bg-amber-50 dark:bg-amber-500/10 border-amber-200 dark:border-amber-500/20';
+
+  // --- Render Helpers ---
+
+  const renderConfigurationCell = () => {
+    switch (resource.type) {
+        case 'INSTANCE':
+            return (
+                <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200">
+                        <Cpu className="w-3.5 h-3.5 text-slate-400" />
+                        <span title="Machine Type" className="tabular-nums">{resource.machineType}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        {resource.ips?.some(ip => !!ip.external) && (
+                            <Badge variant="warning" className="px-1.5 py-0 text-[10px]">Public IP</Badge>
+                        )}
+                        {resource.disks && resource.disks.length > 0 && (
+                            <Tooltip content={`${resource.disks.length} Attached Disks`}>
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0 rounded text-[10px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 tabular-nums">
+                                    <HardDrive className="w-2.5 h-2.5" /> {resource.disks.length}
+                                </span>
+                            </Tooltip>
+                        )}
+                    </div>
+                </div>
+            );
+        case 'BUCKET':
+            return (
+                <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200">
+                        <Box className="w-3.5 h-3.5 text-slate-400" />
+                        <span title="Storage Class">{resource.storageClass}</span>
+                    </div>
+                    <div className="text-[10px] text-slate-500">Object Storage</div>
+                </div>
+            );
+        case 'CLOUD_SQL':
+            return (
+                <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200">
+                        <Database className="w-3.5 h-3.5 text-slate-400" />
+                        <span title="Database Version">{resource.databaseVersion?.replace('POSTGRES_', 'PG ').replace('MYSQL_', 'MySQL ')}</span>
+                    </div>
+                    <div className="text-[10px] text-slate-500 truncate max-w-[160px]" title={resource.machineType}>{resource.machineType}</div>
+                </div>
+            );
+        case 'DISK':
+            return (
+                <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200">
+                        <HardDrive className="w-3.5 h-3.5 text-slate-400" />
+                        <span className="tabular-nums">{resource.sizeGb} GB</span>
+                    </div>
+                    <div className="text-[10px] text-slate-500">Block Storage</div>
+                </div>
+            );
+        case 'CLOUD_RUN':
+            return (
+                <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200">
+                        <Zap className="w-3.5 h-3.5 text-slate-400" />
+                        <span>Serverless</span>
+                    </div>
+                    {resource.url && (
+                        <a href={resource.url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} className="text-[10px] text-blue-500 hover:underline flex items-center gap-1 max-w-[160px] truncate">
+                            <Globe className="w-2.5 h-2.5"/> {resource.url.replace('https://', '')}
+                        </a>
+                    )}
+                </div>
+            );
+        case 'IMAGE':
+            return (
+                <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200">
+                        <ImageIcon className="w-3.5 h-3.5 text-slate-400" />
+                        <span className="truncate max-w-[160px]" title={resource.family}>{resource.family || 'No Family'}</span>
+                    </div>
+                    <div className="text-[10px] text-slate-500 tabular-nums">{resource.sizeGb} GB Disk</div>
+                </div>
+            );
+        case 'SNAPSHOT':
+            return (
+                <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200">
+                        <Camera className="w-3.5 h-3.5 text-slate-400" />
+                        <span className="tabular-nums">{resource.sizeGb} GB</span>
+                    </div>
+                    <div className="text-[10px] text-slate-500">Backup</div>
+                </div>
+            );
+        default:
+            return <div className="text-slate-400 text-xs">-</div>;
+    }
+  };
+
+  const renderLifecycleCell = () => {
+      // Only show Provisioning Model for INSTANCES where it matters
+      const showProvisioning = resource.type === 'INSTANCE';
+
+      return (
+        <div className="flex flex-col gap-2">
+            <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[11px] font-bold w-fit ${statusColor}`}>
+                {resource.status === 'RUNNING' || resource.status === 'READY' ? <PlayCircle className="w-3 h-3" /> : 
+                resource.status === 'STOPPED' || resource.status === 'TERMINATED' ? <StopCircle className="w-3 h-3" /> : 
+                <AlertCircle className="w-3 h-3" />}
+                {resource.status}
+            </div>
+            
+            <div className="flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
+                <Clock className="w-3 h-3" />
+                <span className="tabular-nums">{timeAgo}</span>
+            </div>
+
+            {showProvisioning && resource.provisioningModel !== 'STANDARD' && (
+                <div>
+                    {resource.provisioningModel === 'SPOT' ? <Badge variant="purple" className="py-0 px-1.5 text-[10px]">Spot</Badge> : null}
+                    {resource.provisioningModel === 'RESERVED' ? <Badge variant="success" className="py-0 px-1.5 text-[10px]">Reserved</Badge> : null}
+                </div>
+            )}
+        </div>
+      );
+  };
 
   return (
     <>
@@ -179,14 +301,36 @@ export const ResourceRow = React.memo(({
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -10 }}
         transition={{ duration: 0.2 }}
-        onClick={() => !isEditing && setIsExpanded(p => !p)}
+        onClick={() => !isEditing && !resource.isUpdating && setIsExpanded(p => !p)}
         className={`
-          group border-b border-slate-200 dark:border-slate-800/60 transition-all duration-200
+          group border-b border-slate-200 dark:border-slate-800/60 transition-all duration-200 relative
           ${isEditing ? 'bg-blue-50/50 dark:bg-blue-900/20' : 'hover:bg-slate-100 dark:hover:bg-slate-800/50 cursor-pointer'}
           ${isSelected ? 'bg-blue-50/80 dark:bg-blue-900/30' : ''}
           ${isExpanded && !isEditing ? 'bg-slate-50/80 dark:bg-slate-800/40 shadow-inner' : ''}
+          ${resource.isUpdating ? 'bg-slate-50/60 dark:bg-slate-900/60 pointer-events-none' : ''}
         `}
       >
+        {/* Loading Overlay */}
+        <AnimatePresence>
+          {resource.isUpdating && (
+             <motion.div 
+               initial={{ opacity: 0 }}
+               animate={{ opacity: 1 }}
+               exit={{ opacity: 0 }}
+               className="absolute inset-0 bg-white/50 dark:bg-slate-950/50 z-10 flex items-center justify-center backdrop-blur-[1px]"
+             >
+                <div className="h-[2px] w-full bg-blue-100 dark:bg-blue-900 absolute bottom-0">
+                   <motion.div 
+                     className="h-full bg-blue-500"
+                     initial={{ width: "0%" }}
+                     animate={{ width: "100%" }}
+                     transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
+                   />
+                </div>
+             </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* 1. Selection Checkbox */}
         <td className="pl-6 pr-3 py-4 align-top" onClick={e => e.stopPropagation()}>
           <button 
@@ -194,7 +338,7 @@ export const ResourceRow = React.memo(({
             disabled={resource.isUpdating}
             className={`
               mt-1.5 p-1 rounded transition-colors
-              ${resource.isUpdating ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-200 dark:hover:bg-slate-700'}
+              ${resource.isUpdating ? 'opacity-30 cursor-not-allowed' : 'hover:bg-slate-200 dark:hover:bg-slate-700'}
               ${isSelected ? 'text-blue-600 dark:text-blue-400' : 'text-slate-300 dark:text-slate-600'}
             `}
           >
@@ -203,7 +347,7 @@ export const ResourceRow = React.memo(({
         </td>
 
         {/* 2. Identity (Name, ID) */}
-        <td className="px-4 py-4 align-top">
+        <td className={`px-4 py-4 align-top ${resource.isUpdating ? 'opacity-40' : ''}`}>
           <div className="flex flex-col gap-1.5">
              <div className="flex items-center gap-2">
                 <span className="font-bold text-slate-800 dark:text-slate-100 truncate text-sm leading-tight max-w-[220px]" title={resource.name}>
@@ -223,16 +367,11 @@ export const ResourceRow = React.memo(({
                    {copiedId ? <Check className="w-3 h-3 text-green-500"/> : <Copy className="w-3 h-3"/>}
                 </button>
              </div>
-             {resource.url && (
-                <a href={resource.url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} className="text-[10px] text-blue-500 hover:underline flex items-center gap-1 mt-0.5">
-                   {resource.url.replace('https://', '')} <Globe className="w-2.5 h-2.5"/>
-                </a>
-             )}
           </div>
         </td>
 
         {/* 3. Infrastructure (Type, Zone) */}
-        <td className="px-4 py-4 align-top">
+        <td className={`px-4 py-4 align-top ${resource.isUpdating ? 'opacity-40' : ''}`}>
            <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2">
                  <Tooltip content={getFullTypeName()}>
@@ -241,92 +380,29 @@ export const ResourceRow = React.memo(({
                     </div>
                  </Tooltip>
                  <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    {resource.type === 'INSTANCE' ? 'VM Instance' : 
-                     resource.type === 'CLOUD_SQL' ? 'Cloud SQL' : 
-                     resource.type.replace('_', ' ')}
+                    {resource.type === 'INSTANCE' ? 'VM' : 
+                     resource.type === 'CLOUD_SQL' ? 'SQL' : 
+                     resource.type === 'BUCKET' ? 'Bucket' :
+                     resource.type === 'DISK' ? 'Disk' :
+                     resource.type === 'CLOUD_RUN' ? 'Service' :
+                     resource.type.charAt(0) + resource.type.slice(1).toLowerCase().replace('_', ' ')}
                  </span>
               </div>
               <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
                  <RegionIcon zone={resource.zone} className="w-3.5 h-2.5 rounded-[1px] shadow-sm" />
-                 <span className="font-mono text-[11px] tabular-nums">{resource.zone}</span>
+                 <span className="font-mono text-[11px] tabular-nums">{resource.zone === 'global' ? 'Global' : resource.zone}</span>
               </div>
            </div>
         </td>
 
-        {/* 4. Configuration (Specs) */}
-        <td className="px-4 py-4 align-top">
-           <div className="space-y-1.5">
-              {/* Primary Spec */}
-              <div className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200">
-                 {isVM && (
-                    <>
-                       <Cpu className="w-3.5 h-3.5 text-slate-400" />
-                       <span title="Machine Type" className="tabular-nums">{resource.machineType}</span>
-                    </>
-                 )}
-                 {resource.type === 'CLOUD_SQL' && (
-                    <>
-                       <Database className="w-3.5 h-3.5 text-slate-400" />
-                       <span title="DB Version">{resource.databaseVersion?.split('_')[1]}</span>
-                    </>
-                 )}
-                 {resource.sizeGb && (
-                    <>
-                       <HardDrive className="w-3.5 h-3.5 text-slate-400" />
-                       <span className="tabular-nums">{resource.sizeGb} GB</span>
-                    </>
-                 )}
-                 {resource.type === 'CLOUD_RUN' && (
-                    <>
-                       <Zap className="w-3.5 h-3.5 text-slate-400" />
-                       <span>Serverless</span>
-                    </>
-                 )}
-              </div>
-
-              {/* Secondary Spec (Network/Storage detail) */}
-              <div className="flex flex-wrap gap-2">
-                 {hasPublicIp && (
-                    <Tooltip content="Exposed to Public Internet">
-                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
-                          <Globe className="w-2.5 h-2.5" /> Public
-                       </span>
-                    </Tooltip>
-                 )}
-                 {resource.disks && resource.disks.length > 1 && (
-                    <Tooltip content={`${resource.disks.length} Attached Disks`}>
-                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 tabular-nums">
-                          <HardDrive className="w-2.5 h-2.5" /> {resource.disks.length}
-                       </span>
-                    </Tooltip>
-                 )}
-              </div>
-           </div>
+        {/* 4. Configuration (Specs) - DYNAMIC PER TYPE */}
+        <td className={`px-4 py-4 align-top ${resource.isUpdating ? 'opacity-40' : ''}`}>
+           {renderConfigurationCell()}
         </td>
 
-        {/* 5. State & Lifecycle */}
-        <td className="px-4 py-4 align-top">
-           <div className="flex flex-col gap-2">
-              <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[11px] font-bold w-fit ${statusColor}`}>
-                 {resource.status === 'RUNNING' || resource.status === 'READY' ? <PlayCircle className="w-3 h-3" /> : 
-                  resource.status === 'STOPPED' ? <StopCircle className="w-3 h-3" /> : 
-                  <AlertCircle className="w-3 h-3" />}
-                 {resource.status}
-              </div>
-              
-              <div className="flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
-                 <Clock className="w-3 h-3" />
-                 <span className="tabular-nums">{timeAgo}</span>
-              </div>
-
-              {/* Provisioning */}
-              {resource.provisioningModel !== 'STANDARD' && (
-                 <div>
-                    {resource.provisioningModel === 'SPOT' && <Badge variant="purple" className="py-0 px-1.5 text-[10px]">Spot</Badge>}
-                    {resource.provisioningModel === 'RESERVED' && <Badge variant="success" className="py-0 px-1.5 text-[10px]">Reserved</Badge>}
-                 </div>
-              )}
-           </div>
+        {/* 5. State & Lifecycle - DYNAMIC */}
+        <td className={`px-4 py-4 align-top ${resource.isUpdating ? 'opacity-40' : ''}`}>
+           {renderLifecycleCell()}
         </td>
 
         {/* 6. Governance (Labels) */}
@@ -392,7 +468,7 @@ export const ResourceRow = React.memo(({
                 </div>
              </div>
            ) : (
-             <div className="space-y-2">
+             <div className={`space-y-2 ${resource.isUpdating ? 'opacity-40' : ''}`}>
                 <div className="flex flex-wrap gap-1.5 content-start">
                    {Object.entries(resource.labels).slice(0, 4).map(([k, v]) => (
                       <span key={k} className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700/60 max-w-[140px] truncate" title={`${k}: ${v}`}>
@@ -430,58 +506,65 @@ export const ResourceRow = React.memo(({
         </td>
 
         {/* 7. Actions */}
-        <td className="pr-6 pl-4 py-4 align-top text-right w-[120px]">
-           <div className="flex items-center justify-end gap-1">
-              {!resource.isUpdating && !isEditing && (
-                 <>
-                    {hasProposed ? (
-                       <div className="flex items-center gap-1">
-                         <Button 
-                            size="xs" 
-                            variant="success" 
-                            onClick={(e) => { e.stopPropagation(); onApply(resource.id, resource.proposedLabels!); }} 
-                            className="h-8 px-2" 
-                            leftIcon={<Check className="w-3.5 h-3.5" />}
-                          >
-                            Apply
-                          </Button>
-                         <Button 
-                            size="xs" 
-                            variant="danger" 
-                            onClick={(e) => { e.stopPropagation(); onRevert(resource.id); }} 
-                            className="h-8 px-2"
-                            leftIcon={<X className="w-3.5 h-3.5" />}
-                          >
-                            Reject
-                          </Button>
-                       </div>
-                    ) : (
-                       <>
-                          <button 
-                             onClick={(e) => { e.stopPropagation(); onViewHistory(resource); }}
-                             className={`
-                               p-2 rounded-lg transition-colors relative
-                               ${hasHistory 
-                                 ? 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20' 
-                                 : 'text-slate-400 hover:text-blue-600 hover:bg-slate-100 dark:hover:bg-slate-800'}
-                             `}
-                             title={hasHistory ? `${resource.history?.length} history entries` : 'View Audit History'}
-                          >
-                             <History className="w-4 h-4" />
-                             {hasHistory && (
-                                <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-blue-500 rounded-full border border-white dark:border-slate-900"></span>
-                             )}
-                          </button>
-                          <button 
-                             onClick={startEditing} 
-                             className="p-2 text-slate-400 hover:text-blue-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
-                             title="Edit Labels"
-                          >
-                             <Pencil className="w-4 h-4" />
-                          </button>
-                       </>
-                    )}
-                 </>
+        <td className="pr-6 pl-4 py-4 align-top text-right w-[120px] relative z-20">
+           <div className="flex items-center justify-end gap-1 min-h-[32px]">
+              {resource.isUpdating ? (
+                 <div className="flex items-center gap-2 text-blue-500 animate-in fade-in">
+                    <span className="text-[10px] font-bold uppercase tracking-wider">Updating</span>
+                    <Spinner className="w-4 h-4" />
+                 </div>
+              ) : (
+                 !isEditing && (
+                    <>
+                        {hasProposed ? (
+                           <div className="flex items-center gap-1">
+                             <Button 
+                                size="xs" 
+                                variant="success" 
+                                onClick={(e) => { e.stopPropagation(); onApply(resource.id, resource.proposedLabels!); }} 
+                                className="h-8 px-2" 
+                                leftIcon={<Check className="w-3.5 h-3.5" />}
+                              >
+                                Apply
+                              </Button>
+                             <Button 
+                                size="xs" 
+                                variant="danger" 
+                                onClick={(e) => { e.stopPropagation(); onRevert(resource.id); }} 
+                                className="h-8 px-2"
+                                leftIcon={<X className="w-3.5 h-3.5" />}
+                              >
+                                Reject
+                              </Button>
+                           </div>
+                        ) : (
+                           <>
+                              <button 
+                                 onClick={(e) => { e.stopPropagation(); onViewHistory(resource); }}
+                                 className={`
+                                   p-2 rounded-lg transition-colors relative group/hist
+                                   ${hasHistory 
+                                     ? 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20' 
+                                     : 'text-slate-400 hover:text-blue-600 hover:bg-slate-100 dark:hover:bg-slate-800'}
+                                 `}
+                                 title="View Audit History"
+                              >
+                                 <History className="w-4 h-4" />
+                                 {hasHistory && (
+                                    <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-blue-500 rounded-full border border-white dark:border-slate-900"></span>
+                                 )}
+                              </button>
+                              <button 
+                                 onClick={startEditing} 
+                                 className="p-2 text-slate-400 hover:text-blue-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                                 title="Edit Labels"
+                              >
+                                 <Pencil className="w-4 h-4" />
+                              </button>
+                           </>
+                        )}
+                    </>
+                 )
               )}
            </div>
         </td>
@@ -492,7 +575,7 @@ export const ResourceRow = React.memo(({
         <tr className="bg-slate-50/50 dark:bg-slate-900/20 animate-in fade-in duration-200">
           <td colSpan={7} className="p-0">
              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 p-6 mx-6 mb-6 mt-2 border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-950/50 shadow-sm">
-                
+                {/* ... (Existing Details Content remains unchanged) ... */}
                 {/* Column 1: Core IDs & Fingerprint */}
                 <div className="space-y-4">
                    <div>
@@ -542,51 +625,59 @@ export const ResourceRow = React.memo(({
                            <span className="text-slate-400 font-normal ml-1">{new Date(resource.creationTimestamp).toLocaleTimeString()}</span>
                         </div>
                      </div>
-                     <div>
-                        <label className="text-[10px] text-slate-500 block">Provisioning Model</label>
-                        <div className="flex items-center gap-1.5 mt-0.5">
-                           {resource.provisioningModel === 'SPOT' ? (
-                             <Badge variant="purple" className="py-0">Spot Instance</Badge>
-                           ) : resource.provisioningModel === 'RESERVED' ? (
-                             <Badge variant="success" className="py-0">Reserved</Badge>
-                           ) : (
-                             <Badge variant="neutral" className="py-0">On-Demand</Badge>
-                           )}
+                     {resource.type === 'INSTANCE' && (
+                        <div>
+                            <label className="text-[10px] text-slate-500 block">Provisioning Model</label>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                            {resource.provisioningModel === 'SPOT' ? (
+                                <Badge variant="purple" className="py-0">Spot Instance</Badge>
+                            ) : resource.provisioningModel === 'RESERVED' ? (
+                                <Badge variant="success" className="py-0">Reserved</Badge>
+                            ) : (
+                                <Badge variant="neutral" className="py-0">On-Demand</Badge>
+                            )}
+                            </div>
                         </div>
-                     </div>
+                     )}
                    </div>
                 </div>
 
                 {/* Column 3: Network (IPs) */}
-                <div className="space-y-4">
-                   <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2 flex items-center gap-2">
-                      <Network className="w-3 h-3"/> Network Interfaces
-                   </div>
-                   {resource.ips && resource.ips.length > 0 ? (
-                      <div className="space-y-2">
-                         {resource.ips.map((ip, i) => (
-                           <div key={i} className="text-xs bg-slate-50 dark:bg-slate-900 p-2 rounded border border-slate-100 dark:border-slate-800">
-                              <div className="flex justify-between items-center mb-1">
-                                <span className="font-semibold text-slate-700 dark:text-slate-300">{ip.network}</span>
-                                {ip.external && <Globe className="w-3 h-3 text-blue-500" />}
-                              </div>
-                              <div className="font-mono text-[10px] text-slate-500 tabular-nums">
-                                 <div>Int: {ip.internal}</div>
-                                 {ip.external && <div className="text-blue-600 dark:text-blue-400">Ext: {ip.external}</div>}
-                              </div>
-                           </div>
-                         ))}
-                      </div>
-                   ) : (
-                      <div className="text-xs text-slate-400 italic">No network interfaces detected.</div>
-                   )}
-                </div>
+                {(resource.type === 'INSTANCE' || resource.type === 'CLOUD_SQL') && (
+                    <div className="space-y-4">
+                        <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2 flex items-center gap-2">
+                            <Network className="w-3 h-3"/> Network Interfaces
+                        </div>
+                        {resource.ips && resource.ips.length > 0 ? (
+                            <div className="space-y-2">
+                                {resource.ips.map((ip, i) => (
+                                <div key={i} className="text-xs bg-slate-50 dark:bg-slate-900 p-2 rounded border border-slate-100 dark:border-slate-800">
+                                    <div className="flex justify-between items-center mb-1">
+                                        <span className="font-semibold text-slate-700 dark:text-slate-300">{ip.network}</span>
+                                        {ip.external && <Globe className="w-3 h-3 text-blue-500" />}
+                                    </div>
+                                    <div className="font-mono text-[10px] text-slate-500 tabular-nums">
+                                        <div>Int: {ip.internal}</div>
+                                        {ip.external && <div className="text-blue-600 dark:text-blue-400">Ext: {ip.external}</div>}
+                                    </div>
+                                </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="text-xs text-slate-400 italic">No network interfaces detected.</div>
+                        )}
+                    </div>
+                )}
 
-                {/* Column 4: Storage (Disks) */}
+                {/* Column 4: Storage (Disks/Specs) - DYNAMIC */}
                 <div className="space-y-4">
                    <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2 flex items-center gap-2">
-                      <Database className="w-3 h-3"/> Storage & DB
+                      {resource.type === 'BUCKET' ? <Box className="w-3 h-3"/> : 
+                       resource.type === 'CLOUD_SQL' ? <Database className="w-3 h-3"/> :
+                       <HardDrive className="w-3 h-3"/>} 
+                      {resource.type === 'BUCKET' ? 'Storage Specs' : resource.type === 'CLOUD_SQL' ? 'DB Specs' : 'Storage'}
                    </div>
+                   
                    {resource.type === 'CLOUD_SQL' ? (
                       <div className="space-y-2">
                          <div className="text-xs bg-slate-50 dark:bg-slate-900 p-2 rounded border border-slate-100 dark:border-slate-800">
@@ -597,6 +688,16 @@ export const ResourceRow = React.memo(({
                             <span className="font-semibold text-slate-700 dark:text-slate-300">Machine Tier</span>
                             <div className="font-mono mt-1 text-slate-600 dark:text-slate-400">{resource.machineType}</div>
                          </div>
+                      </div>
+                   ) : resource.type === 'BUCKET' ? (
+                      <div className="text-xs bg-slate-50 dark:bg-slate-900 p-2 rounded border border-slate-100 dark:border-slate-800">
+                         <span className="font-semibold text-slate-700 dark:text-slate-300">Storage Class</span>
+                         <div className="font-mono mt-1 text-slate-600 dark:text-slate-400">{resource.storageClass}</div>
+                      </div>
+                   ) : resource.type === 'IMAGE' ? (
+                      <div className="text-xs bg-slate-50 dark:bg-slate-900 p-2 rounded border border-slate-100 dark:border-slate-800">
+                         <span className="font-semibold text-slate-700 dark:text-slate-300">Image Family</span>
+                         <div className="font-mono mt-1 text-slate-600 dark:text-slate-400">{resource.family || 'N/A'}</div>
                       </div>
                    ) : resource.disks && resource.disks.length > 0 ? (
                       <div className="space-y-2">
@@ -617,11 +718,11 @@ export const ResourceRow = React.memo(({
                       </div>
                    ) : resource.sizeGb ? (
                        <div className="text-xs bg-slate-50 dark:bg-slate-900 p-2 rounded border border-slate-100 dark:border-slate-800">
-                          <span className="font-semibold text-slate-700 dark:text-slate-300">Standalone Disk</span>
+                          <span className="font-semibold text-slate-700 dark:text-slate-300">Disk Size</span>
                           <div className="font-mono font-bold mt-1 tabular-nums">{resource.sizeGb} GB</div>
                        </div>
                    ) : (
-                      <div className="text-xs text-slate-400 italic">No storage details available.</div>
+                      <div className="text-xs text-slate-400 italic">No specific storage details.</div>
                    )}
                 </div>
              </div>

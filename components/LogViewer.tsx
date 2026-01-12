@@ -15,23 +15,27 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({ logs, onRefresh
   const [autoScroll, setAutoScroll] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // Use a layout effect to scroll immediately after render
+  // Layout effect to scroll immediately after render updates
   useEffect(() => {
     if (autoScroll && scrollRef.current && !expandedId) {
       scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
     }
   }, [logs, autoScroll, expandedId]);
 
+  // Optimized Scroll Handler using requestAnimationFrame to prevent layout thrashing
   const handleScroll = () => {
     if (!scrollRef.current) return;
-    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
-    // Tolerance of 20px
-    const isAtBottom = scrollHeight - scrollTop - clientHeight < 20;
     
-    // Only update state if it actually changes to avoid re-renders
-    if (isAtBottom !== autoScroll) {
-        setAutoScroll(isAtBottom);
-    }
+    requestAnimationFrame(() => {
+        if (!scrollRef.current) return;
+        const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+        // Tolerance of 20px
+        const isAtBottom = scrollHeight - scrollTop - clientHeight < 20;
+        
+        if (isAtBottom !== autoScroll) {
+            setAutoScroll(isAtBottom);
+        }
+    });
   };
 
   const toggleExpand = (id: string) => {

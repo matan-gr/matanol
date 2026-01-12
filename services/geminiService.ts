@@ -128,6 +128,46 @@ export const generateComplianceReport = async (
   return response.text || "Report generation failed.";
 };
 
+export const generateDashboardBrief = async (metrics: {
+  stoppedCount: number;
+  stoppedDiskGb: number;
+  publicIpCount: number;
+  unlabeledCount: number;
+}): Promise<string> => {
+  const ai = getClient();
+  const prompt = `
+    Analyze these cloud infrastructure metrics:
+    - Stopped (Idle) VMs: ${metrics.stoppedCount}
+    - Wasted Storage (Attached to Stopped VMs): ${metrics.stoppedDiskGb} GB
+    - Public Internet Exposure: ${metrics.publicIpCount} resources
+    - Governance Gaps (Unlabeled): ${metrics.unlabeledCount} resources
+
+    Role: Senior Cloud Security & FinOps Advisor.
+    Task: Provide a concise executive brief (Markdown) with 2 distinct sections.
+
+    1. **💰 Cost Optimization**: 
+       - Highlight the wasted storage cost (Assume standard persistent disk is ~$0.04/GB/mo). 
+       - Recommend lifecycle actions (e.g., Snapshot & Delete).
+    
+    2. **🛡️ Security Posture**:
+       - Assess the public IP exposure risk.
+       - Suggest specific Google Cloud mitigation services (e.g., Cloud Armor, Identity-Aware Proxy, Cloud NAT) to replace public IPs.
+
+    Keep it brief, high-impact, and professional. Use bullet points.
+  `;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+    });
+    return response.text || "Brief generation failed.";
+  } catch (e) {
+    console.error("Dashboard Brief Gen Failed:", e);
+    return "";
+  }
+};
+
 export const analyzeNamingPatterns = async (
   resourceNames: string[]
 ): Promise<{ 
