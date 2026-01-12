@@ -1,13 +1,14 @@
 
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
-import { GceResource, FilterConfig } from '../types';
+import { GceResource, FilterConfig, SavedView } from '../types';
 import { 
   CheckSquare, Square, Search, FilterX, ChevronDown, ChevronRight, Layers, Tag,
   Server, Cloud, Box
 } from 'lucide-react';
 import { Button, Card } from './DesignSystem';
 import { ResourceRow } from './ResourceRow';
-import { ResourceFilters, BulkActionBar, PaginationControl, AuditHistoryModal } from './TableControls';
+import { ResourceFilters, BulkActionBar, PaginationControl } from './TableControls';
+import { AuditHistoryModal } from './AuditHistoryModal';
 import { LabelingStudio } from './LabelingStudio';
 import { useResourceFilter, calculateFacetedCounts } from '../hooks/useResourceFilter';
 import { TableRowSkeleton } from './Skeletons';
@@ -18,6 +19,8 @@ interface ResourceTableProps {
   filterConfig: FilterConfig;
   onFilterChange: (config: FilterConfig) => void;
   onSaveView: (name: string) => void;
+  savedViews?: SavedView[]; // Pass saved views
+  onLoadView?: (view: SavedView) => void; // Handler to load a view
   onApplyLabels: (id: string, labels: Record<string, string>) => void;
   onUpdateLabels: (id: string, labels: Record<string, string>) => void;
   onRevert: (id: string) => void;
@@ -36,6 +39,8 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
   filterConfig,
   onFilterChange,
   onSaveView,
+  savedViews = [], // Default empty
+  onLoadView,
   onApplyLabels, 
   onUpdateLabels, 
   onRevert, 
@@ -250,6 +255,8 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
           onDownload={downloadCSV}
           onToggleShow={() => setShowFilters(!showFilters)}
           onSaveView={onSaveView}
+          savedViews={savedViews}
+          onLoadView={onLoadView}
           availableZones={availableZones}
           availableMachineTypes={availableMachineTypes}
           availableLabelKeys={availableLabelKeys}
