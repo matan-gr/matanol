@@ -5,7 +5,7 @@ This guide details the secure deployment of the **Yalla Label** application to G
 
 ## 1. Preparation
 
-Rename the provided templates:
+Rename the provided templates locally before deploying:
 1.  **`Dockerfile.txt`** -> `Dockerfile`
 2.  **`nginx.txt`** -> `nginx.conf`
 3.  **`dockerignore.txt`** -> `.dockerignore`
@@ -18,7 +18,7 @@ Rename the provided templates:
 
 ## 3. Infrastructure Setup
 
-Enable APIs:
+Enable the required APIs:
 ```bash
 gcloud services enable \
   cloudbuild.googleapis.com \
@@ -28,7 +28,7 @@ gcloud services enable \
   logging.googleapis.com
 ```
 
-Create Artifact Registry:
+Create an Artifact Registry repository:
 ```bash
 gcloud artifacts repositories create app-repo \
     --repository-format=docker \
@@ -36,55 +36,69 @@ gcloud artifacts repositories create app-repo \
     --description="Enterprise App Repo"
 ```
 
-## 4. Build & Publish (With API Key Injection)
+## 4. Build & Publish (Secure API Key Injection)
 
-We use Cloud Build to build the Docker image. You **must** inject the Gemini API key during the build process so it is baked into the frontend bundle.
+We use Google Cloud Build to create the Docker image. Because this is a Single Page Application (SPA), the Gemini API key must be "baked" into the JavaScript bundle at build time.
 
-**Option A: Command Line Substitution**
-Replace `[YOUR_GEMINI_API_KEY]` with your actual key.
+### Step 4a: Create `cloudbuild.yaml`
 
-```bash
-gcloud builds submit \
-  --tag us-central1-docker.pkg.dev/[PROJECT_ID]/app-repo/yalla-label:v1.0 \
-  --substitutions=_API_KEY=[YOUR_GEMINI_API_KEY]
-```
-
-**Option B: Using cloudbuild.yaml (Recommended)**
-Create a `cloudbuild.yaml` file:
+Create a file named `cloudbuild.yaml` in the root directory:
 
 ```yaml
 steps:
+  # Build the container image
   - name: 'gcr.io/cloud-builders/docker'
-    args: [
-      'build', 
-      '--build-arg', 'API_KEY=${_API_KEY}', 
-      '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/app-repo/yalla-label:v1.0', 
-      '.'
-    ]
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        docker build \
+          --build-arg API_KEY=$_GEMINI_API_KEY \
+          -t us-central1-docker.pkg.dev/$PROJECT_ID/app-repo/yalla-label:latest \
+          .
+
+  # Push the container image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/app-repo/yalla-label:latest']
+
+  # Deploy container image to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'yalla-label'
+      - '--image'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/app-repo/yalla-label:latest'
+      - '--region'
+      - 'us-central1'
+      - '--allow-unauthenticated'
+      - '--memory'
+      - '512Mi'
+
 images:
-  - 'us-central1-docker.pkg.dev/$PROJECT_ID/app-repo/yalla-label:v1.0'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/app-repo/yalla-label:latest'
 ```
 
-Then run:
-```bash
-gcloud builds submit --config cloudbuild.yaml --substitutions=_API_KEY=[YOUR_KEY]
-```
+### Step 4b: Run the Build
 
-## 5. Deploy to Cloud Run
-
-Deploy the service with strict security configurations.
+Submit the build to Cloud Build, substituting the `_GEMINI_API_KEY` variable with your actual key.
 
 ```bash
-gcloud run deploy yalla-label \
-  --image us-central1-docker.pkg.dev/[PROJECT_ID]/app-repo/yalla-label:v1.0 \
-  --region us-central1 \
-  --allow-unauthenticated \
-  --memory 512Mi \
-  --cpu 1 \
-  --min-instances 1 \
-  --max-instances 10
+gcloud builds submit --config cloudbuild.yaml --substitutions=_GEMINI_API_KEY="YOUR_ACTUAL_API_KEY_HERE"
 ```
+
+*Note: For production pipelines, it is recommended to store the API Key in Secret Manager and access it within Cloud Build.*
+
+## 5. Security Post-Deployment
+
+Since the API Key is embedded in the client-side code:
+
+1.  Go to the **Google AI Studio** or **Google Cloud Console** credentials page.
+2.  Locate the API Key used above.
+3.  **Add an HTTP Referrer Restriction** to limit usage of this key **only** to your Cloud Run URL (e.g., `https://yalla-label-xyz-uc.a.run.app/*`).
+4.  This prevents unauthorized use if the key is scraped from the browser.
 
 ## 6. Access Control
 
-End users must have permissions on the GCP projects they intend to manage (e.g., `roles/compute.viewer`, `roles/compute.admin`). The app authenticates purely on the client-side using the User's OAuth token provided in the UI.
+End users must have permissions on the GCP projects they intend to manage (e.g., `roles/compute.viewer`, `roles/compute.admin`). The app authenticates purely on the client-side using the User's OAuth token provided in the Login UI.

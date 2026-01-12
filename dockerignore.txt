@@ -13,3 +13,4 @@ Dockerfile.txt
 nginx.txt
 dockerignore.txt
 deploy.md
+README.md

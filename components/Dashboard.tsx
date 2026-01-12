@@ -5,13 +5,13 @@ import { Button, Card, Badge, GlassCard } from './DesignSystem';
 import { 
   Shield, AlertTriangle, ArrowRight, 
   Server, HardDrive, Zap, Globe, MapPin, 
-  Image as ImageIcon, Cloud, Database, 
+  Cloud, Database, 
   CheckCircle2, AlertOctagon, Terminal,
-  Bot, RefreshCw, DollarSign, Box, Camera,
-  TrendingUp, TrendingDown, Layers, PieChart, Ship,
-  Lock, Wallet, Cpu, Activity, MoreHorizontal
+  Bot, RefreshCw, DollarSign, Box,
+  TrendingUp, TrendingDown, Layers, Ship,
+  Lock, Wallet, Cpu, Activity
 } from 'lucide-react';
-import { HealthGauge, DonutChart, SparkLine, BarChart, AnimatedCounter } from './Visualizations';
+import { DonutChart, SparkLine, AnimatedCounter } from './Visualizations';
 import { useDashboardAnalytics } from '../hooks/useDashboardAnalytics';
 import { RegionIcon } from './RegionIcon';
 import { motion, AnimatePresence, Variants } from 'framer-motion';
@@ -57,12 +57,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ resources, stats, onNaviga
   }, [analysis.stoppedInstances]);
 
   // --- Resource Categorization for Charts ---
+  // Improved granular breakdown for Enterprise visibility
   const resourceDistribution = useMemo(() => [
-    { label: 'Compute', value: analysis.vmCount + analysis.gkeCount + analysis.cloudRunCount, color: '#3b82f6' }, // blue-500
-    { label: 'Storage', value: analysis.diskCount + analysis.bucketCount + analysis.snapshotCount, color: '#a855f7' }, // purple-500
-    { label: 'Database', value: analysis.sqlCount, color: '#06b6d4' }, // cyan-500
-    { label: 'Artifacts', value: analysis.imageCount, color: '#f59e0b' }, // amber-500
-  ].filter(x => x.value > 0), [analysis]);
+    { label: 'Virtual Machines', value: analysis.vmCount, color: '#3b82f6' }, // blue-500
+    { label: 'GKE Clusters', value: analysis.gkeCount, color: '#0ea5e9' }, // sky-500
+    { label: 'Cloud Run', value: analysis.cloudRunCount, color: '#6366f1' }, // indigo-500
+    { label: 'Cloud SQL', value: analysis.sqlCount, color: '#06b6d4' }, // cyan-500
+    { label: 'Persistent Disks', value: analysis.diskCount, color: '#a855f7' }, // purple-500
+    { label: 'Cloud Storage', value: analysis.bucketCount, color: '#eab308' }, // yellow-500
+    { label: 'Images & Snapshots', value: analysis.imageCount + analysis.snapshotCount, color: '#f59e0b' }, // amber-500
+  ].filter(x => x.value > 0).sort((a, b) => b.value - a.value), [analysis]);
 
   const handleGenerateInsights = async () => {
      setIsGeneratingInsight(true);
@@ -190,17 +194,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ resources, stats, onNaviga
                       <DonutChart data={resourceDistribution} />
                    </div>
 
-                   {/* Legend & Details */}
-                   <div className="flex-1 w-full grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="space-y-4">
-                         <DetailRow label="Compute Engine" count={analysis.vmCount} total={stats.total} color="bg-blue-500" icon={Cpu} />
-                         <DetailRow label="Kubernetes" count={analysis.gkeCount} total={stats.total} color="bg-sky-500" icon={Ship} />
-                         <DetailRow label="Cloud Run" count={analysis.cloudRunCount} total={stats.total} color="bg-indigo-500" icon={Cloud} />
+                   {/* Legend & Details - Two Column Layout with Headings */}
+                   <div className="flex-1 w-full grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-6">
+                      <div className="space-y-3">
+                         <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500 pb-1 border-b border-slate-100 dark:border-slate-800">Compute & Containers</h4>
+                         <DetailRow label="Virtual Machines" count={analysis.vmCount} total={stats.total} color="bg-blue-500" icon={Cpu} />
+                         <DetailRow label="GKE Clusters" count={analysis.gkeCount} total={stats.total} color="bg-sky-500" icon={Ship} />
+                         <DetailRow label="Cloud Run Services" count={analysis.cloudRunCount} total={stats.total} color="bg-indigo-500" icon={Cloud} />
                       </div>
-                      <div className="space-y-4">
-                         <DetailRow label="Storage" count={analysis.diskCount + analysis.bucketCount} total={stats.total} color="bg-purple-500" icon={HardDrive} />
-                         <DetailRow label="Database" count={analysis.sqlCount} total={stats.total} color="bg-cyan-500" icon={Database} />
-                         <DetailRow label="Artifacts" count={analysis.imageCount + analysis.snapshotCount} total={stats.total} color="bg-amber-500" icon={Box} />
+                      <div className="space-y-3">
+                         <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500 pb-1 border-b border-slate-100 dark:border-slate-800">Data & Storage</h4>
+                         <DetailRow label="Cloud SQL Instances" count={analysis.sqlCount} total={stats.total} color="bg-cyan-500" icon={Database} />
+                         <DetailRow label="Persistent Disks" count={analysis.diskCount} total={stats.total} color="bg-purple-500" icon={HardDrive} />
+                         <DetailRow label="Cloud Storage Buckets" count={analysis.bucketCount} total={stats.total} color="bg-yellow-500" icon={Box} />
+                         {(analysis.imageCount + analysis.snapshotCount) > 0 && (
+                            <DetailRow label="Images & Snapshots" count={analysis.imageCount + analysis.snapshotCount} total={stats.total} color="bg-amber-500" icon={Layers} />
+                         )}
                       </div>
                    </div>
                 </div>
@@ -435,6 +444,8 @@ const MetricCard = ({ title, value, icon: Icon, trend, trendUp, color, chartData
 
 const DetailRow = ({ label, count, total, color, icon: Icon }: any) => {
    const percent = total > 0 ? (count / total) * 100 : 0;
+   if (count === 0) return null; // Hide empty categories in detailed list
+   
    return (
       <div className="group">
          <div className="flex justify-between items-center mb-1 text-xs">

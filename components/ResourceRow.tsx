@@ -8,8 +8,7 @@ import {
   CheckSquare, Square, ChevronDown, ChevronRight,
   Cpu, Tag, Globe, Network, Fingerprint, Database,
   Image as ImageIcon, Camera, Cloud, GripVertical, AlertCircle, PlayCircle, StopCircle, Box,
-  Ship, ShieldCheck, User, Gauge, Layers, MemoryStick, Boxes, GaugeCircle, ShieldAlert,
-  Activity, Lock, ExternalLink, Container, Anchor
+  Ship, User, ShieldAlert, Lock, ExternalLink, Container, Anchor
 } from 'lucide-react';
 import { Button, Input, Select, Badge, Tooltip, Spinner } from './DesignSystem';
 import { validateKey, validateValue } from '../utils/validation';

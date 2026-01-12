@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { NAVIGATION_ITEMS, APP_NAME } from '../constants';
 import { LogOut, Menu, X, CheckCircle2, AlertTriangle, Info, Moon, Sun, Bookmark, Trash2, Tags, Search, ChevronRight, AlertOctagon, Terminal, Zap } from 'lucide-react';
@@ -23,7 +22,7 @@ interface LayoutProps {
   onDeleteView?: (id: string) => void;
 }
 
-const ToastItem = ({ n, onDismiss }: { n: Notification, onDismiss: (id: string) => void }) => {
+const ToastItem: React.FC<{ n: Notification, onDismiss: (id: string) => void }> = ({ n, onDismiss }) => {
     // Determine styles based on type
     let styles = {
         bg: 'bg-white/90 dark:bg-slate-900/90',

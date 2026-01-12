@@ -5,7 +5,6 @@ import { fetchAllResources, updateResourceLabels as updateResourceLabelsApi } fr
 import { analyzeResourceBatch, generateComplianceReport } from '../services/geminiService';
 import { generateMockResources } from '../services/mockService';
 import { persistenceService } from '../services/persistenceService';
-import { batchNormalizeResources, NormalizationMap } from '../services/normalizationService';
 import { evaluateInventory, DEFAULT_TAXONOMY, getPolicies } from '../services/policyService';
 
 export const useResourceManager = (
@@ -265,8 +264,6 @@ export const useResourceManager = (
 
   }, [resources, addNotification]);
 
-  // Pass-through functions
-  const normalizeLabels = useCallback(async (map: NormalizationMap) => { /* logic reused from bulkUpdate */ }, []);
   const revertResource = useCallback((id: string) => {
     setResources(prev => prev.map(r => r.id === id ? { ...r, proposedLabels: undefined } : r));
   }, []);
@@ -286,7 +283,6 @@ export const useResourceManager = (
     analyzeResources,
     updateResourceLabels,
     bulkUpdateLabels,
-    normalizeLabels,
     revertResource,
     clearReport,
     batchProgress,
