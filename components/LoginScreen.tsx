@@ -101,6 +101,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onConnect, isConnectin
                         animate={{ opacity: 1 }}
                         className="space-y-5"
                         onSubmit={handleSubmit}
+                        autoComplete="off"
                      >
                         <div className="space-y-2">
                            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 ml-1">Workspace ID</label>
@@ -111,6 +112,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onConnect, isConnectin
                               required
                               className="bg-slate-950 border-slate-800 text-white placeholder:text-slate-600 h-11 text-sm font-mono focus:border-indigo-500 focus:ring-indigo-500/20"
                               icon={<Cloud className="w-4 h-4 text-slate-500" />}
+                              autoComplete="off"
+                              name="project_id_field_no_fill"
                            />
                         </div>
                         
@@ -134,6 +137,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onConnect, isConnectin
                               required
                               className="bg-slate-950 border-slate-800 text-white placeholder:text-slate-600 h-11 text-sm font-mono focus:border-indigo-500 focus:ring-indigo-500/20"
                               icon={<Key className="w-4 h-4 text-slate-500" />}
+                              autoComplete="new-password"
+                              data-lpignore="true"
                            />
                         </div>
 

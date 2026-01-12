@@ -10,6 +10,26 @@ const LOGGING_URL = 'https://logging.googleapis.com/v2/entries:list';
 
 // --- Resilience Utilities ---
 
+// Security: Redact sensitive data from logs
+const safeLog = (message: string, error: any) => {
+  const sanitize = (str: string) => str.replace(/Bearer\s+[a-zA-Z0-9\-\._~\+\/]+=*/gi, 'Bearer [REDACTED]');
+  
+  let errorMsg = '';
+  if (error instanceof Error) {
+    errorMsg = error.message;
+  } else if (typeof error === 'object') {
+    try {
+      errorMsg = JSON.stringify(error);
+    } catch {
+      errorMsg = 'Unknown Error';
+    }
+  } else {
+    errorMsg = String(error);
+  }
+
+  console.warn(sanitize(`${message}: ${errorMsg}`));
+};
+
 // Simple concurrency limiter to prevent 429 Quota Exceeded
 class RateLimiter {
   private queue: (() => Promise<any>)[] = [];
@@ -123,7 +143,9 @@ const fetchPagedResource = async <T>(
         // Soft fail: return what we have so far if pagination fails halfway, 
         // unless it's auth error which is critical.
         if (response.status === 401) throw new Error("401");
-        console.warn(`Partial fetch failure: ${response.status} for ${url}`);
+        // Sanitize URL before logging warning
+        const safeUrl = url.split('?')[0]; 
+        console.warn(`Partial fetch failure: ${response.status} for ${safeUrl}`);
         return resources; 
       }
 
@@ -411,7 +433,7 @@ export const fetchAllResources = async (
       }
     } catch (e: any) {
       if (e.message === '401') throw e; // Fatal auth error
-      console.warn(`Fetch warning for ${task.name}:`, e);
+      safeLog(`Fetch warning for ${task.name}`, e);
       // We do not rethrow, so partial results can be displayed
     }
   });
