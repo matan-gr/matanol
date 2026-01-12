@@ -2,6 +2,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { GceResource, FilterConfig } from '../types';
 
+export type SortConfig = { key: string; direction: 'asc' | 'desc' } | null;
+
 /**
  * Highly optimized filter function using imperative loops for performance on large datasets.
  * Returns true if resource matches criteria.
@@ -16,8 +18,14 @@ const matchesFilter = (r: GceResource, config: FilterConfig, ignoreKey?: keyof F
       // Optimization: Only check inner objects if name/id don't match
       if (!matchesName && !matchesId) {
          const matchesZone = r.zone.toLowerCase().includes(searchLower);
-         const matchesLabel = !matchesZone && Object.values(r.labels).some(v => (v as string).toLowerCase().includes(searchLower));
-         if (!matchesZone && !matchesLabel) return false;
+         // Search in both label keys and values
+         const matchesLabel = Object.entries(r.labels).some(([k, v]) => 
+            k.toLowerCase().includes(searchLower) || v.toLowerCase().includes(searchLower)
+         );
+         
+         const matchesTag = r.tags?.some(t => t.toLowerCase().includes(searchLower));
+
+         if (!matchesZone && !matchesLabel && !matchesTag) return false;
       }
   }
 
@@ -129,7 +137,7 @@ export const calculateFacetedCounts = (resources: GceResource[], config: FilterC
     return counts;
 };
 
-export const useResourceFilter = (resources: GceResource[], filterConfig: FilterConfig) => {
+export const useResourceFilter = (resources: GceResource[], filterConfig: FilterConfig, sortConfig: SortConfig = null) => {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(() => {
     if (typeof localStorage !== 'undefined') {
@@ -144,13 +152,39 @@ export const useResourceFilter = (resources: GceResource[], filterConfig: Filter
 
   const filteredResources = useMemo(() => filterResources(resources, filterConfig), [resources, filterConfig]);
 
+  // Apply Sorting
+  const sortedResources = useMemo(() => {
+    if (!sortConfig) return filteredResources;
+    
+    const sorted = [...filteredResources].sort((a, b) => {
+        let valA: any = a[sortConfig.key as keyof GceResource];
+        let valB: any = b[sortConfig.key as keyof GceResource];
+
+        // Handle specific Date sorting
+        if (sortConfig.key === 'creationTimestamp') {
+            valA = new Date(a.creationTimestamp).getTime();
+            valB = new Date(b.creationTimestamp).getTime();
+        } else {
+            // Default string comparison
+            valA = (valA || '').toString().toLowerCase();
+            valB = (valB || '').toString().toLowerCase();
+        }
+
+        if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+        if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+        return 0;
+    });
+    
+    return sorted;
+  }, [filteredResources, sortConfig]);
+
   useEffect(() => {
     setCurrentPage(1);
-  }, [filterConfig, resources.length]);
+  }, [filterConfig, resources.length, sortConfig]); // Reset page on filter or sort change
 
-  const totalPages = Math.ceil(filteredResources.length / itemsPerPage);
+  const totalPages = Math.ceil(sortedResources.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
-  const paginatedResources = useMemo(() => filteredResources.slice(startIndex, startIndex + itemsPerPage), [filteredResources, startIndex, itemsPerPage]);
+  const paginatedResources = useMemo(() => sortedResources.slice(startIndex, startIndex + itemsPerPage), [sortedResources, startIndex, itemsPerPage]);
 
   const handleItemsPerPageChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = parseInt(e.target.value, 10);
@@ -160,7 +194,7 @@ export const useResourceFilter = (resources: GceResource[], filterConfig: Filter
   };
 
   return {
-      filteredResources,
+      filteredResources: sortedResources, // Expose sorted resources as the "filtered" set for the table
       paginatedResources,
       totalPages,
       itemsPerPage,

@@ -7,17 +7,24 @@ import { LogViewer } from './components/LogViewer';
 import { Dashboard } from './components/Dashboard';
 import { TopologyMap } from './components/TopologyMap';
 import { LoginScreen } from './components/LoginScreen';
+import { CommandPalette } from './components/CommandPalette';
+import { PolicyManager } from './components/PolicyManager';
+import { ComplianceReportModal } from './components/ComplianceReportModal';
+import { GlobalContextMenu } from './components/GlobalContextMenu'; // Import
 import { useNotifications } from './hooks/useNotifications';
 import { useResourceManager } from './hooks/useResourceManager';
 import { useLogs } from './hooks/useLogs';
 import { Button, Input, Card, SectionHeader } from './components/DesignSystem';
-import { BarChart3, Wand2, Moon, Sun, Network, RefreshCw } from 'lucide-react';
+import { BarChart3, Wand2, Moon, Sun, Network, RefreshCw, ShieldCheck, FileText, Loader2, Sparkles } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { MarkdownView } from './components/MarkdownView';
 import { Storage } from './utils/storage';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { QuotaVisuals } from './components/QuotaVisuals';
 import { fetchQuotas } from './services/gcpService';
+
+// Fix for framer-motion type mismatches
+const MotionDiv = motion.div as any;
 
 const DEFAULT_FILTER_CONFIG: FilterConfig = {
   search: '',
@@ -35,383 +42,338 @@ const DEFAULT_FILTER_CONFIG: FilterConfig = {
 
 // Enterprise-grade transition with spring physics
 const PageTransition: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <motion.div
-    initial={{ opacity: 0, y: 20, scale: 0.98 }}
+  <MotionDiv
+    initial={{ opacity: 0, y: 15, scale: 0.99 }}
     animate={{ opacity: 1, y: 0, scale: 1 }}
-    exit={{ opacity: 0, y: -20, scale: 0.98 }}
+    exit={{ opacity: 0, y: -15, scale: 0.99 }}
     transition={{ type: "spring", stiffness: 300, damping: 30 }}
-    className="h-full flex flex-col origin-top"
+    className="h-full"
   >
     {children}
-  </motion.div>
+  </MotionDiv>
 );
 
-export const App: React.FC = () => {
+export const App = () => {
+  // State
+  const [credentials, setCredentials] = useState<GcpCredentials | null>(null);
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [credentials, setCredentials] = useState<GcpCredentials>({ projectId: '', accessToken: '' });
-  
-  // View State
   const [filterConfig, setFilterConfig] = useState<FilterConfig>(DEFAULT_FILTER_CONFIG);
-  const [savedViews, setSavedViews] = useState<SavedView[]>([]);
-  
-  // Quota State
+  const [isDark, setIsDark] = useState(true);
   const [quotas, setQuotas] = useState<QuotaEntry[]>([]);
   const [isLoadingQuotas, setIsLoadingQuotas] = useState(false);
-
-  // Theme Management
-  const [isDark, setIsDark] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('theme');
-      if (saved) return saved === 'dark';
-      return window.matchMedia('(prefers-color-scheme: dark)').matches;
-    }
-    return true;
-  });
-
-  useEffect(() => {
-    const root = window.document.documentElement;
-    if (isDark) {
-      root.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
-    } else {
-      root.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
-    }
-  }, [isDark]);
-
-  const toggleTheme = useCallback(() => setIsDark(prev => !prev), []);
+  const [savedViews, setSavedViews] = useState<SavedView[]>([]);
+  const [showReport, setShowReport] = useState(false);
+  const [isPaletteOpen, setIsPaletteOpen] = useState(false); // Global Palette State
 
   // Hooks
-  const { logs, addAppLog, refreshGcpLogs, isLoadingLogs, setLogs } = useLogs();
   const { notifications, addNotification, dismissNotification } = useNotifications();
   const { 
-    resources, stats, isConnecting, isAnalysing, report,
-    connectProject, refreshResources, loadDemoData, analyzeResources, updateResourceLabels, bulkUpdateLabels, revertResource, clearReport
-  } = useResourceManager(addAppLog, addNotification);
+    resources, 
+    stats, 
+    isConnecting, 
+    loadingStatus, 
+    report, 
+    isAnalysing, // Used for button state
+    connectProject, 
+    loadDemoData, 
+    analyzeResources, 
+    updateResourceLabels, 
+    revertResource, 
+    clearReport,
+    batchProgress,
+    bulkUpdateLabels,
+    updateGovernance
+  } = useResourceManager(
+    (msg, level) => {}, 
+    addNotification
+  );
+  
+  const { logs, refreshGcpLogs, isLoadingLogs } = useLogs();
 
-  // Auto-refresh logs when tab is active
+  // Load Preferences
   useEffect(() => {
-    if (isAuthenticated && activeTab === 'logs' && credentials.accessToken && credentials.accessToken !== 'demo-mode') {
-      refreshGcpLogs(credentials);
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme === 'light') {
+      setIsDark(false);
+      document.documentElement.classList.remove('dark');
+    } else {
+      setIsDark(true);
+      document.documentElement.classList.add('dark');
     }
-  }, [isAuthenticated, activeTab, credentials, refreshGcpLogs]);
-
-  // Load Quotas when tab is active
-  const loadQuotas = useCallback(async () => {
-      if (credentials.accessToken && credentials.accessToken !== 'demo-mode') {
-          setIsLoadingQuotas(true);
-          const data = await fetchQuotas(credentials.projectId, credentials.accessToken);
-          setQuotas(data);
-          setIsLoadingQuotas(false);
-      } else if (credentials.accessToken === 'demo-mode') {
-          // Mock quotas for demo
-          setQuotas([
-              { metric: 'CPUS', limit: 24, usage: 22, region: 'us-central1', percentage: 91.6 },
-              { metric: 'CPUS', limit: 24, usage: 18, region: 'europe-west1', percentage: 75.0 },
-              { metric: 'SSD_TOTAL_GB', limit: 500, usage: 480, region: 'us-central1', percentage: 96.0 },
-              { metric: 'IN_USE_ADDRESSES', limit: 8, usage: 8, region: 'us-east1', percentage: 100.0 },
-              { metric: 'INSTANCES', limit: 50, usage: 10, region: 'asia-east1', percentage: 20.0 },
-          ]);
-      }
-  }, [credentials]);
+  }, []);
 
   useEffect(() => {
-      if (isAuthenticated && activeTab === 'quotas') {
-          loadQuotas();
+    if (credentials?.projectId) {
+       const views = Storage.get<SavedView[]>(credentials.projectId, 'saved_views', []);
+       setSavedViews(views);
+    }
+  }, [credentials?.projectId]);
+
+  // Show report when generated
+  useEffect(() => {
+    if (report && !isAnalysing) {
+        setShowReport(true);
+    }
+  }, [report, isAnalysing]);
+
+  // Global Key Listener for Cmd+K
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        setIsPaletteOpen(prev => !prev);
       }
-  }, [isAuthenticated, activeTab, loadQuotas]);
+      if (e.key === 'Escape') {
+        setIsPaletteOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Handlers
-  const handleConnect = useCallback(async (creds: GcpCredentials) => {
+  const toggleTheme = () => {
+    setIsDark(prev => {
+      const next = !prev;
+      if (next) document.documentElement.classList.add('dark');
+      else document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', next ? 'dark' : 'light');
+      return next;
+    });
+  };
+
+  const handleConnect = async (creds: GcpCredentials) => {
     const success = await connectProject(creds);
     if (success) {
       setCredentials(creds);
-      setIsAuthenticated(true);
       setActiveTab('dashboard');
+      refreshGcpLogs(creds);
       
-      // Load user-specific settings securely
-      const userViews = Storage.get<SavedView[]>(creds.projectId, 'saved_views', []);
-      setSavedViews(userViews);
+      // Fetch Quotas asynchronously
+      setIsLoadingQuotas(true);
+      fetchQuotas(creds.projectId, creds.accessToken)
+        .then(setQuotas)
+        .catch(e => console.error("Quota fetch error", e))
+        .finally(() => setIsLoadingQuotas(false));
     }
-  }, [connectProject]);
+  };
 
-  const handleDemoMode = useCallback(() => {
-    setCredentials({ projectId: 'demo-enterprise-prod', accessToken: 'demo-mode' });
-    setIsAuthenticated(true);
-    if (loadDemoData()) {
-      setActiveTab('dashboard');
-      // Inject some fake logs for demo
-      setLogs([
-        { id: '1', timestamp: new Date(), severity: 'NOTICE', methodName: 'v1.compute.instances.start', principalEmail: 'jane@company.com', resourceName: 'prod-web-vm-01', summary: 'Start VM', source: 'GCP' },
-        { id: '2', timestamp: new Date(Date.now() - 100000), severity: 'INFO', methodName: 'v1.compute.instances.setLabels', principalEmail: 'system-auto', resourceName: 'dev-db-04', summary: 'Update Labels', source: 'GCP' },
-      ]);
-      // Mock saved views for demo
-      setSavedViews([
-         { id: 'demo-1', name: 'Production Errors', createdAt: Date.now(), config: { ...DEFAULT_FILTER_CONFIG, statuses: ['TERMINATED', 'STOPPED'] } }
-      ]);
-    }
-  }, [loadDemoData, setLogs]);
+  const handleDemo = () => {
+    loadDemoData();
+    setCredentials({ projectId: 'demo-mode', accessToken: 'demo-mode' });
+    setActiveTab('dashboard');
+    // Fake quotas for demo
+    setQuotas([
+        { metric: 'CPUS', limit: 24, usage: 20, region: 'us-central1', percentage: 83.3 },
+        { metric: 'SSD_TOTAL_GB', limit: 1024, usage: 800, region: 'us-central1', percentage: 78.1 },
+        { metric: 'IN_USE_ADDRESSES', limit: 8, usage: 8, region: 'global', percentage: 100 },
+        { metric: 'NVIDIA_A100_GPUS', limit: 12, usage: 0, region: 'us-central1', percentage: 0 },
+    ]);
+  };
 
-  const handleDisconnect = useCallback(() => {
-    setIsAuthenticated(false);
-    setCredentials({ projectId: '', accessToken: '' });
-    setSavedViews([]);
-    // Do NOT clear storage here, just logout
-  }, []);
+  const handleDisconnect = () => {
+    setCredentials(null);
+    setActiveTab('dashboard');
+    setFilterConfig(DEFAULT_FILTER_CONFIG);
+  };
 
-  // Memoized Action Handlers for Resource Table to prevent row re-renders
-  const handleUpdate = useCallback((id: string, labels: Record<string, string>) => {
-    updateResourceLabels(credentials, id, labels, false);
-  }, [credentials, updateResourceLabels]);
-
-  const handleApply = useCallback((id: string, labels: Record<string, string>) => {
-    updateResourceLabels(credentials, id, labels, true);
-  }, [credentials, updateResourceLabels]);
-
-  const handleRevert = useCallback((id: string) => {
-    revertResource(id);
-  }, [revertResource]);
-
-  const handleBulk = useCallback((updates: Map<string, Record<string, string>>) => {
-    bulkUpdateLabels(credentials, updates);
-  }, [credentials, bulkUpdateLabels]);
-
-  // View Handlers
-  const handleSaveView = useCallback((name: string) => {
+  const handleSaveView = (name: string) => {
+    if (!credentials?.projectId) return;
     const newView: SavedView = {
       id: Math.random().toString(36).substr(2, 9),
       name,
-      config: { ...filterConfig },
+      config: filterConfig,
       createdAt: Date.now()
     };
     const updatedViews = [...savedViews, newView];
     setSavedViews(updatedViews);
-    
-    // Persist securely scoped to project
     Storage.set(credentials.projectId, 'saved_views', updatedViews);
-    
-    addNotification(`View "${name}" saved`, 'success');
-  }, [credentials.projectId, filterConfig, savedViews, addNotification]);
+    addNotification(`View "${name}" saved.`, 'success');
+  };
 
-  const handleDeleteView = useCallback((id: string) => {
+  const handleLoadView = (view: SavedView) => {
+    setFilterConfig(view.config);
+    addNotification(`View "${view.name}" loaded.`, 'info');
+  };
+
+  const handleDeleteView = (id: string) => {
+    if (!credentials?.projectId) return;
     const updatedViews = savedViews.filter(v => v.id !== id);
     setSavedViews(updatedViews);
     Storage.set(credentials.projectId, 'saved_views', updatedViews);
-  }, [credentials.projectId, savedViews]);
+    addNotification('View deleted.', 'info');
+  };
 
-  const handleSelectView = useCallback((view: SavedView) => {
-    setFilterConfig(view.config);
-    setActiveTab('inventory');
-    addNotification(`Loaded view: ${view.name}`, 'info');
-  }, [addNotification]);
-
-  // --- Login State ---
-  if (!isAuthenticated) {
-     return (
-       <>
-          {/* Notifications can appear on login screen too */}
-          <AnimatePresence>
-             {notifications.map(n => (
-                <motion.div 
-                  key={n.id} 
-                  initial={{ opacity: 0, y: -20, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -20, scale: 0.95 }}
-                  className={`fixed top-4 right-4 p-4 rounded-xl border shadow-2xl z-[100] font-medium text-sm flex items-start gap-3 max-w-sm ${
-                    n.type === 'error' ? 'bg-red-50 text-red-900 border-red-200 shadow-red-500/10' : 'bg-slate-900 text-white border-slate-700 shadow-slate-900/20'
-                  }`}
-                >
-                  <div className="flex-1 break-words">
-                    {n.message}
-                  </div>
-                </motion.div>
-             ))}
-          </AnimatePresence>
-          <LoginScreen 
-            onConnect={handleConnect} 
-            isConnecting={isConnecting} 
-            onDemo={handleDemoMode} 
-          />
-       </>
-     );
+  // Render Login
+  if (!credentials) {
+    return (
+      <ErrorBoundary>
+        <LoginScreen 
+          onConnect={handleConnect} 
+          isConnecting={isConnecting}
+          loadingStatus={loadingStatus}
+          onDemo={handleDemo}
+        />
+        {/* Render Toast Container even on Login Screen - reuse Layout's logic but simplified for login */}
+        <div className="fixed top-6 right-6 z-[100] flex flex-col gap-3 pointer-events-none w-full max-w-sm">
+            <AnimatePresence>
+                {notifications.map(n => (
+                    <MotionDiv key={n.id} initial={{opacity:0, x:20}} animate={{opacity:1, x:0}} exit={{opacity:0}} className="bg-slate-900 border border-red-500/50 p-4 rounded-xl shadow-2xl pointer-events-auto text-white flex items-start gap-3">
+                        <ShieldCheck className="w-5 h-5 text-red-500 mt-0.5" />
+                        <div>
+                           <div className="font-bold text-sm">System Alert</div>
+                           <div className="text-sm opacity-80">{n.message}</div>
+                        </div>
+                    </MotionDiv>
+                ))}
+            </AnimatePresence>
+        </div>
+      </ErrorBoundary>
+    );
   }
 
+  // Main App
   return (
     <ErrorBoundary>
+      <CommandPalette 
+        isOpen={isPaletteOpen}
+        onClose={() => setIsPaletteOpen(false)}
+        resources={resources}
+        onNavigate={setActiveTab}
+        onSelectResource={(id) => {
+            setFilterConfig(prev => ({ ...prev, search: id }));
+        }}
+        onToggleTheme={toggleTheme}
+        onDisconnect={handleDisconnect}
+      />
+      
+      <GlobalContextMenu 
+        onOpenCommandPalette={() => setIsPaletteOpen(true)}
+        onNavigate={setActiveTab}
+        onToggleTheme={toggleTheme}
+        onDisconnect={handleDisconnect}
+        isDark={isDark}
+      />
+      
       <Layout 
         activeTab={activeTab} 
-        onNavigate={setActiveTab} 
+        onNavigate={setActiveTab}
         onDisconnect={handleDisconnect}
         notifications={notifications}
         onDismissNotification={dismissNotification}
         isDark={isDark}
         toggleTheme={toggleTheme}
         savedViews={savedViews}
-        onSelectView={handleSelectView}
+        onSelectView={handleLoadView}
         onDeleteView={handleDeleteView}
       >
         <AnimatePresence mode="wait">
           {activeTab === 'dashboard' && (
             <PageTransition key="dashboard">
-              <Dashboard 
-                resources={resources} 
-                stats={stats} 
-                onNavigate={setActiveTab}
-              />
+              <Dashboard resources={resources} stats={stats} onNavigate={setActiveTab} />
             </PageTransition>
           )}
 
           {activeTab === 'inventory' && (
             <PageTransition key="inventory">
-              {/* Changed: Removed h-full to allow natural height growth */}
-              <div className="space-y-6 pb-10 flex flex-col">
-                <SectionHeader 
-                  title="Resource Inventory" 
-                  subtitle="Manage, audit, and label your cloud infrastructure across all zones."
-                  action={
+              <SectionHeader 
+                title="Resource Inventory" 
+                subtitle="Manage, label, and audit your entire cloud footprint."
+                action={
                     <Button 
-                      onClick={analyzeResources} 
-                      isLoading={isAnalysing}
-                      leftIcon={<Wand2 className="w-4 h-4" />}
-                      variant="primary"
-                      className="shadow-lg shadow-violet-500/20 dark:shadow-violet-900/20 bg-violet-600 hover:bg-violet-700 text-white border-transparent"
+                        variant="secondary" 
+                        onClick={analyzeResources} 
+                        isLoading={isAnalysing}
+                        className={`
+                            border-indigo-200 dark:border-indigo-800 hover:bg-indigo-50 dark:hover:bg-indigo-900/30
+                            ${isAnalysing ? 'bg-indigo-50 dark:bg-indigo-900/20' : 'bg-white dark:bg-slate-900'}
+                        `}
+                        leftIcon={isAnalysing ? <Loader2 className="w-4 h-4 animate-spin text-indigo-600" /> : <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />}
                     >
-                      Analyze with Gemini
+                        {isAnalysing ? 'Running AI Auditor...' : 'Run AI Audit'}
                     </Button>
-                  }
-                />
-
-                {report && (
-                  <div className="mb-8 p-6 rounded-2xl bg-gradient-to-r from-violet-50 to-fuchsia-50 dark:from-violet-950/40 dark:to-fuchsia-950/40 border border-violet-200 dark:border-violet-500/20 backdrop-blur-md animate-in slide-in-from-top-2 relative overflow-hidden shadow-xl dark:shadow-2xl flex-shrink-0">
-                    <div className="absolute top-0 right-0 p-4 opacity-10">
-                      <Wand2 className="w-32 h-32 text-violet-900 dark:text-white" />
-                    </div>
-                    <div className="flex justify-between items-start mb-6 relative z-10 border-b border-slate-200 dark:border-white/5 pb-4">
-                      <h3 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-3">
-                        <div className="p-2 bg-violet-100 dark:bg-violet-500/20 rounded-lg">
-                          <BarChart3 className="w-5 h-5 text-violet-600 dark:text-violet-400" />
-                        </div>
-                        Inventory Insights
-                      </h3>
-                      <button onClick={clearReport} className="text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors text-2xl leading-none">&times;</button>
-                    </div>
-                    <div className="relative z-10">
-                      <MarkdownView content={report} />
-                    </div>
-                  </div>
-                )}
-
-                <ResourceTable 
-                  resources={resources}
-                  filterConfig={filterConfig}
-                  onFilterChange={setFilterConfig}
-                  onSaveView={handleSaveView}
-                  onApplyLabels={handleApply}
-                  onUpdateLabels={handleUpdate}
-                  onRevert={handleRevert}
-                  onBulkUpdateLabels={handleBulk}
-                  onRefresh={refreshResources}
-                  isLoading={isConnecting} 
-                />
-              </div>
+                }
+              />
+              <ResourceTable 
+                resources={resources}
+                filterConfig={filterConfig}
+                onFilterChange={setFilterConfig}
+                onSaveView={handleSaveView}
+                savedViews={savedViews}
+                onLoadView={handleLoadView}
+                onDeleteView={handleDeleteView}
+                onApplyLabels={(id, labels) => updateResourceLabels(credentials, id, labels, true)}
+                onUpdateLabels={(id, labels) => updateResourceLabels(credentials, id, labels, false)}
+                onRevert={revertResource}
+                onBulkUpdateLabels={(updates) => bulkUpdateLabels(credentials, updates)}
+                onRefresh={() => handleConnect(credentials)} // Reuse connect for full refresh
+                isLoading={isConnecting}
+                batchProgress={batchProgress}
+              />
+              
+              <ComplianceReportModal 
+                 isOpen={showReport}
+                 onClose={() => setShowReport(false)}
+                 report={report}
+              />
             </PageTransition>
           )}
 
           {activeTab === 'topology' && (
             <PageTransition key="topology">
-              <div className="space-y-6 h-full flex flex-col">
-                <SectionHeader 
-                  title="Network Topology" 
-                  subtitle="Visual map of your infrastructure dependencies."
-                  action={
-                    <Button onClick={refreshResources} isLoading={isConnecting} variant="secondary">
-                      Refresh Data
-                    </Button>
-                  }
-                />
-                <div className="flex-1 min-h-[500px]">
-                  <TopologyMap resources={resources} />
+                <div className="h-[calc(100vh-140px)] min-h-[600px] flex flex-col">
+                    <SectionHeader title="Network Topology" subtitle="Visualize resource relationships and connectivity." />
+                    <TopologyMap resources={resources} />
                 </div>
-              </div>
             </PageTransition>
           )}
 
           {activeTab === 'quotas' && (
-            <PageTransition key="quotas">
-              <div className="space-y-6 h-full flex flex-col">
+             <PageTransition key="quotas">
                 <SectionHeader 
-                  title="Quotas & Limits" 
-                  subtitle="Monitor resource consumption against Google Cloud regional limits."
-                  action={
-                    <Button onClick={loadQuotas} isLoading={isLoadingQuotas} variant="secondary" leftIcon={<RefreshCw className="w-4 h-4"/>}>
-                      Refresh Quotas
-                    </Button>
-                  }
+                    title="Quotas & Limits" 
+                    subtitle="Monitor capacity usage across regions to prevent outages." 
+                    action={
+                        <Button 
+                            variant="outline" 
+                            size="sm" 
+                            onClick={() => {
+                                setIsLoadingQuotas(true);
+                                fetchQuotas(credentials.projectId, credentials.accessToken)
+                                    .then(setQuotas)
+                                    .finally(() => setIsLoadingQuotas(false));
+                            }}
+                            isLoading={isLoadingQuotas}
+                            leftIcon={<RefreshCw className={`w-4 h-4 ${isLoadingQuotas ? 'animate-spin' : ''}`} />}
+                        >
+                            Refresh
+                        </Button>
+                    }
                 />
-                <div className="flex-1 min-h-0 overflow-auto pb-8">
-                  <QuotaVisuals quotas={quotas} isLoading={isLoadingQuotas} />
-                </div>
-              </div>
-            </PageTransition>
+                <QuotaVisuals quotas={quotas} isLoading={isLoadingQuotas} />
+             </PageTransition>
+          )}
+
+          {activeTab === 'policy' && (
+             <PageTransition key="policy">
+                <SectionHeader 
+                    title="Governance Center" 
+                    subtitle="Define labeling taxonomies and enforce active compliance policies." 
+                />
+                <PolicyManager resources={resources} onUpdatePolicies={updateGovernance} />
+             </PageTransition>
           )}
 
           {activeTab === 'logs' && (
             <PageTransition key="logs">
-              <div className="space-y-6 h-full flex flex-col">
-                <SectionHeader 
-                  title="Audit Logs" 
-                  subtitle="Real-time Admin Activity logs from Cloud Logging."
-                  action={
-                    <Button onClick={() => refreshGcpLogs(credentials)} isLoading={isLoadingLogs} variant="secondary">
-                      Refresh Logs
-                    </Button>
-                  }
-                />
-                <div className="flex-1 min-h-0">
-                  <LogViewer logs={logs} onRefresh={() => refreshGcpLogs(credentials)} isLoading={isLoadingLogs} />
+                <div className="h-[calc(100vh-140px)] min-h-[600px] flex flex-col">
+                    <SectionHeader title="Audit Logs" subtitle="Trace administrative actions and API calls." />
+                    <LogViewer 
+                        logs={logs} 
+                        onRefresh={() => refreshGcpLogs(credentials)} 
+                        isLoading={isLoadingLogs} 
+                    />
                 </div>
-              </div>
-            </PageTransition>
-          )}
-
-          {activeTab === 'settings' && (
-            <PageTransition key="settings">
-              <div className="space-y-6">
-                <SectionHeader 
-                  title="Configuration" 
-                  subtitle="Manage application preferences and AI analysis rules."
-                />
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <Card title="General Settings">
-                    <div className="p-6 space-y-4">
-                      <div>
-                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Default Region</label>
-                          <Input defaultValue="us-central1" disabled />
-                      </div>
-                      <div>
-                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Cost Center Format</label>
-                          <Input defaultValue="CC-####" disabled />
-                      </div>
-                      <div className="pt-4">
-                        <Button variant="secondary" disabled>Save Changes</Button>
-                      </div>
-                    </div>
-                  </Card>
-                  <Card title="AI Tuning">
-                    <div className="p-6 space-y-4">
-                      <div className="flex items-center justify-between">
-                          <span className="text-sm text-slate-700 dark:text-slate-300">Auto-Analyze New Resources</span>
-                          <div className="w-10 h-5 bg-violet-600 rounded-full relative cursor-pointer"><div className="absolute right-1 top-1 w-3 h-3 bg-white rounded-full"></div></div>
-                      </div>
-                      <div className="flex items-center justify-between">
-                          <span className="text-sm text-slate-700 dark:text-slate-300">Strict Naming Convention</span>
-                          <div className="w-10 h-5 bg-slate-200 dark:bg-slate-700 rounded-full relative cursor-pointer"><div className="absolute left-1 top-1 w-3 h-3 bg-white rounded-full"></div></div>
-                      </div>
-                    </div>
-                  </Card>
-                </div>
-              </div>
             </PageTransition>
           )}
         </AnimatePresence>

@@ -133,27 +133,54 @@ export const generateDashboardBrief = async (metrics: {
   stoppedDiskGb: number;
   publicIpCount: number;
   unlabeledCount: number;
+  totalDiskGb: number;
+  totalResources: number;
+  estimatedMonthlyWaste: number;
 }): Promise<string> => {
   const ai = getClient();
+  
+  // Pricing context for Gemini to base calculations/recommendations on
+  const pricingContext = `
+    Reference GCP Pricing (US-Central1):
+    - Standard Persistent Disk: ~$0.04 per GB/month
+    - SSD Persistent Disk: ~$0.17 per GB/month
+    - Snapshot Storage: ~$0.026 per GB/month
+    - Static External IP (Unused): ~$0.01 per hour (~$7.30/month)
+    - n1-standard-1 VM (On-Demand): ~$24/month
+  `;
+
   const prompt = `
-    Analyze these cloud infrastructure metrics:
+    ${pricingContext}
+
+    **Current Infrastructure Metrics**:
+    - Total Resources: ${metrics.totalResources}
     - Stopped (Idle) VMs: ${metrics.stoppedCount}
     - Wasted Storage (Attached to Stopped VMs): ${metrics.stoppedDiskGb} GB
+    - Total Storage Footprint: ${metrics.totalDiskGb} GB
     - Public Internet Exposure: ${metrics.publicIpCount} resources
     - Governance Gaps (Unlabeled): ${metrics.unlabeledCount} resources
+    - *Rough Estimated Monthly Waste (Calculated)*: ~$${metrics.estimatedMonthlyWaste.toFixed(2)} / month
 
-    Role: Senior Cloud Security & FinOps Advisor.
-    Task: Provide a concise executive brief (Markdown) with 2 distinct sections.
+    **Role**: Senior Cloud Security & FinOps Advisor.
+    **Task**: Provide a high-impact Executive Briefing in Markdown.
 
-    1. **💰 Cost Optimization**: 
-       - Highlight the wasted storage cost (Assume standard persistent disk is ~$0.04/GB/mo). 
-       - Recommend lifecycle actions (e.g., Snapshot & Delete).
+    **Structure**:
     
-    2. **🛡️ Security Posture**:
-       - Assess the public IP exposure risk.
-       - Suggest specific Google Cloud mitigation services (e.g., Cloud Armor, Identity-Aware Proxy, Cloud NAT) to replace public IPs.
+    1. **## 💰 FinOps Optimization**
+       - Analyze the "Estimated Monthly Waste".
+       - If stopped VMs exist, recommend specific lifecycle actions (e.g., "Snapshot and Delete instances to save approx X%").
+       - Mention the cost impact of orphan disks based on the pricing reference.
+    
+    2. **## 🛡️ Security Posture**
+       - Analyze the ${metrics.publicIpCount} publicly exposed resources.
+       - Suggest specific Google Cloud services to replace public IPs (e.g., "Implement Cloud NAT for outbound traffic", "Use Identity-Aware Proxy (IAP) for SSH access").
+       - Mention the risk of unlabeled resources for security auditing.
 
-    Keep it brief, high-impact, and professional. Use bullet points.
+    **Style Rules**:
+    - Be concise and direct.
+    - Use bullet points.
+    - Use **Bold** for key financial figures or GCP service names.
+    - Do not output generic advice; tie it to the numbers provided.
   `;
 
   try {

@@ -1,10 +1,27 @@
 
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
+import { motion, useSpring, useTransform } from 'framer-motion';
+
+export const AnimatedCounter = ({ value, className = "" }: { value: number | string, className?: string }) => {
+  // Extract number if value is string with formatting (e.g. "95%")
+  const numericValue = typeof value === 'string' ? parseFloat(value.replace(/[^0-9.-]+/g,"")) : value;
+  const suffix = typeof value === 'string' ? value.replace(/[0-9.-]+/g, "") : "";
+  
+  const spring = useSpring(0, { mass: 0.8, stiffness: 75, damping: 15 });
+  const display = useTransform(spring, (current) => 
+    Math.round(current).toLocaleString() + suffix
+  );
+
+  useEffect(() => {
+    spring.set(isNaN(numericValue) ? 0 : numericValue);
+  }, [spring, numericValue]);
+
+  return <motion.span className={className}>{display}</motion.span>;
+};
 
 export const HealthGauge = ({ percentage }: { percentage: number }) => {
   const radius = 40;
   const circumference = 2 * Math.PI * radius;
-  const strokeDashoffset = circumference - (percentage / 100) * circumference;
   
   const color = percentage > 80 ? 'text-emerald-500' : percentage > 50 ? 'text-amber-500' : 'text-red-500';
 
@@ -12,16 +29,20 @@ export const HealthGauge = ({ percentage }: { percentage: number }) => {
     <div className="relative w-32 h-32 flex items-center justify-center">
       <svg className="transform -rotate-90 w-full h-full" viewBox="0 0 100 100">
         <circle cx="50" cy="50" r={radius} stroke="currentColor" strokeWidth="8" fill="transparent" className="text-slate-200 dark:text-slate-800" />
-        <circle 
+        <motion.circle 
           cx="50" cy="50" r={radius} stroke="currentColor" strokeWidth="8" fill="transparent" 
           strokeDasharray={circumference} 
-          strokeDashoffset={strokeDashoffset} 
+          initial={{ strokeDashoffset: circumference }}
+          animate={{ strokeDashoffset: circumference - (percentage / 100) * circumference }}
+          transition={{ duration: 1.5, ease: "easeOut" }}
           strokeLinecap="round"
-          className={`${color} transition-all duration-1000 ease-out`}
+          className={color}
         />
       </svg>
       <div className="absolute flex flex-col items-center">
-        <span className={`text-2xl font-bold ${color}`}>{percentage}%</span>
+        <span className={`text-2xl font-bold ${color}`}>
+            <AnimatedCounter value={percentage} />%
+        </span>
         <span className="text-[10px] uppercase font-bold text-slate-400">Compliance</span>
       </div>
     </div>
@@ -50,11 +71,13 @@ export const DonutChart = ({ data }: { data: { label: string, value: number, col
   }).join(', ');
 
   return (
-    <div className="relative w-32 h-32 rounded-full flex items-center justify-center group" style={{ background: `conic-gradient(${gradient})` }}>
-       <div className="w-24 h-24 bg-white dark:bg-slate-900 rounded-full flex items-center justify-center z-10">
+    <div className="relative w-32 h-32 rounded-full flex items-center justify-center group shadow-inner" style={{ background: `conic-gradient(${gradient})` }}>
+       <div className="w-24 h-24 bg-white dark:bg-slate-900 rounded-full flex items-center justify-center z-10 shadow-lg">
           <div className="text-center">
              <div className="text-xs text-slate-500 font-medium">Total</div>
-             <div className="text-xl font-bold text-slate-800 dark:text-white">{total}</div>
+             <div className="text-xl font-bold text-slate-800 dark:text-white">
+                <AnimatedCounter value={total} />
+             </div>
           </div>
        </div>
     </div>
@@ -68,12 +91,14 @@ export const BarChart = ({ data, max, barColor = 'bg-violet-500' }: { data: { la
         <div key={idx} className="w-full">
           <div className="flex justify-between text-xs mb-1">
             <span className="font-medium text-slate-700 dark:text-slate-300 truncate pr-2">{item.label}</span>
-            <span className="text-slate-500 font-mono">{item.value}</span>
+            <span className="text-slate-500 font-mono"><AnimatedCounter value={item.value} /></span>
           </div>
           <div className="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-            <div 
-              className={`h-full ${barColor} rounded-full transition-all duration-1000 ease-out`}
-              style={{ width: `${max > 0 ? (item.value / max) * 100 : 0}%` }}
+            <motion.div 
+              className={`h-full ${barColor} rounded-full`}
+              initial={{ width: 0 }}
+              whileInView={{ width: `${max > 0 ? (item.value / max) * 100 : 0}%` }}
+              transition={{ duration: 1, ease: "easeOut" }}
             />
           </div>
         </div>
@@ -100,20 +125,26 @@ export const SparkLine = ({ data, color = "#3b82f6", height = 40 }: { data: numb
 
   return (
     <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible" preserveAspectRatio="none">
-      <polyline
+      <motion.path
+        d={`M ${points}`}
         fill="none"
         stroke={color}
         strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
-        points={points}
+        initial={{ pathLength: 0 }}
+        animate={{ pathLength: 1 }}
+        transition={{ duration: 1.5, ease: "easeInOut" }}
       />
       {/* End dot */}
-      <circle 
+      <motion.circle 
         cx="100" 
         cy={height - ((data[data.length-1] - min) / range) * height} 
         r="3" 
         fill={color} 
+        initial={{ scale: 0 }}
+        animate={{ scale: 1 }}
+        transition={{ delay: 1.5 }}
         className="animate-pulse"
       />
     </svg>

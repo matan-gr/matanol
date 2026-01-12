@@ -1,22 +1,32 @@
 
 import React, { useState } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { GcpCredentials } from '../types';
 import { APP_NAME, APP_VERSION } from '../constants';
 import { Button, Input } from './DesignSystem';
 import { 
-  ScanBarcode, ArrowRight, Shield, Zap, 
-  Layout, Terminal, Lock, Key, PlayCircle,
-  Cloud, CheckCircle2, Server
+  Tags, ArrowRight, Key, Cloud, Lock, 
+  Activity, CheckCircle2, Zap
 } from 'lucide-react';
 
 interface LoginScreenProps {
   onConnect: (creds: GcpCredentials) => Promise<void>;
   isConnecting: boolean;
+  loadingStatus?: { progress: number, message: string };
   onDemo: () => void;
 }
 
-export const LoginScreen: React.FC<LoginScreenProps> = ({ onConnect, isConnecting, onDemo }) => {
+const ConnectionStep = ({ label, active, completed }: { label: string, active: boolean, completed: boolean }) => (
+    <div className={`flex items-center gap-3 text-xs font-mono transition-colors duration-300 ${active ? 'text-indigo-400' : completed ? 'text-emerald-500' : 'text-slate-500'}`}>
+        <div className={`w-4 h-4 rounded-full flex items-center justify-center border ${active ? 'border-indigo-500 animate-pulse' : completed ? 'border-emerald-500 bg-emerald-500/20' : 'border-slate-800'}`}>
+            {completed && <CheckCircle2 className="w-3 h-3" />}
+            {active && <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full" />}
+        </div>
+        <span>{label}</span>
+    </div>
+);
+
+export const LoginScreen: React.FC<LoginScreenProps> = ({ onConnect, isConnecting, loadingStatus, onDemo }) => {
   const [projectId, setProjectId] = useState('');
   const [token, setToken] = useState('');
 
@@ -27,176 +37,146 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onConnect, isConnectin
     }
   };
 
-  const features = [
-    { icon: Layout, label: "Unified Inventory", desc: "Visualize VMs, Disks, and Services across all zones." },
-    { icon: Zap, label: "AI Governance", desc: "Gemini-powered labeling and policy enforcement." },
-    { icon: Terminal, label: "Audit Trails", desc: "Real-time tracking of admin activities and changes." },
-  ];
+  const progress = loadingStatus?.progress || 0;
 
   return (
-    <div className="min-h-screen w-full flex overflow-hidden bg-slate-50 dark:bg-slate-950 font-sans selection:bg-violet-500/30">
+    <div className="min-h-screen w-full flex items-center justify-center bg-slate-950 text-white font-sans overflow-hidden relative">
       
-      {/* Left Panel - Visuals (Hidden on Mobile) */}
-      <div className="hidden lg:flex lg:w-1/2 relative flex-col justify-between p-12 bg-slate-900 overflow-hidden">
-         {/* Background Effects */}
-         <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_30%,rgba(59,130,246,0.15),transparent_40%)]"></div>
-         <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_70%,rgba(139,92,246,0.15),transparent_40%)]"></div>
-         <div className="absolute inset-0 bg-mesh opacity-30"></div>
-
-         <div className="relative z-10">
-            <div className="flex items-center gap-3 mb-8">
-               <div className="bg-gradient-to-br from-violet-600 to-blue-600 p-2.5 rounded-xl shadow-lg shadow-violet-500/20">
-                  <ScanBarcode className="w-6 h-6 text-white" />
-               </div>
-               <span className="text-xl font-bold text-white tracking-tight">{APP_NAME}</span>
-            </div>
-
-            <motion.h1 
-               initial={{ opacity: 0, y: 20 }}
-               animate={{ opacity: 1, y: 0 }}
-               transition={{ duration: 0.7 }}
-               className="text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400 leading-tight mb-6"
-            >
-               Cloud Governance <br /> Reimagined.
-            </motion.h1>
-            <motion.p 
-               initial={{ opacity: 0, y: 20 }}
-               animate={{ opacity: 1, y: 0 }}
-               transition={{ duration: 0.7, delay: 0.1 }}
-               className="text-lg text-slate-400 max-w-md leading-relaxed"
-            >
-               Stop wrestling with untagged resources. Automate your labeling strategy with AI and gain total visibility into your GCP infrastructure.
-            </motion.p>
-         </div>
-
-         <div className="relative z-10 space-y-8">
-            <div className="space-y-6">
-               {features.map((f, idx) => (
-                  <motion.div 
-                     key={idx}
-                     initial={{ opacity: 0, x: -20 }}
-                     animate={{ opacity: 1, x: 0 }}
-                     transition={{ duration: 0.5, delay: 0.3 + (idx * 0.1) }}
-                     className="flex items-start gap-4 group"
-                  >
-                     <div className="p-3 rounded-lg bg-white/5 border border-white/10 group-hover:bg-violet-500/20 group-hover:border-violet-500/30 transition-colors">
-                        <f.icon className="w-5 h-5 text-slate-300 group-hover:text-violet-300" />
-                     </div>
-                     <div>
-                        <h3 className="font-semibold text-white mb-1">{f.label}</h3>
-                        <p className="text-sm text-slate-500 group-hover:text-slate-400 transition-colors">{f.desc}</p>
-                     </div>
-                  </motion.div>
-               ))}
-            </div>
-
-            <div className="pt-8 border-t border-white/10 flex items-center justify-between text-xs text-slate-500">
-               <div className="flex items-center gap-2">
-                  <Shield className="w-4 h-4" /> Enterprise Security
-               </div>
-               <div>v{APP_VERSION}</div>
-            </div>
-         </div>
+      {/* Background Ambience */}
+      <div className="absolute inset-0 z-0">
+         <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-indigo-900/20 rounded-full blur-[120px] animate-pulse"></div>
+         <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-blue-900/10 rounded-full blur-[100px]"></div>
+         <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 contrast-125"></div>
       </div>
 
-      {/* Right Panel - Login Form */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-4 lg:p-12 relative">
-         {/* Mobile Background */}
-         <div className="absolute inset-0 bg-mesh lg:hidden opacity-50 -z-10"></div>
+      <div className="w-full max-w-md p-6 relative z-10">
          
          <motion.div 
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.5 }}
-            className="w-full max-w-md"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-[#0B1120] border border-slate-800/60 rounded-2xl shadow-2xl overflow-hidden backdrop-blur-xl"
          >
-            <div className="lg:hidden flex justify-center mb-8">
-               <div className="flex items-center gap-3">
-                  <div className="bg-violet-600 p-2 rounded-lg"><ScanBarcode className="w-6 h-6 text-white" /></div>
-                  <span className="text-2xl font-bold text-slate-900 dark:text-white">{APP_NAME}</span>
+            {/* Header */}
+            <div className="p-8 text-center border-b border-slate-800/60 bg-gradient-to-b from-indigo-950/10 to-transparent">
+               <div className="w-20 h-20 bg-indigo-600 rounded-3xl mx-auto mb-5 flex items-center justify-center shadow-lg shadow-indigo-500/20 transform rotate-3 relative group">
+                  <Tags className="w-10 h-10 text-white" />
+                  <div className="absolute -top-3 -right-3 bg-amber-400 rounded-full p-1.5 border-4 border-[#0B1120] shadow-sm animate-in zoom-in duration-500">
+                     <Zap className="w-5 h-5 text-amber-900 fill-amber-900" />
+                  </div>
                </div>
+               <h1 className="text-3xl font-extrabold tracking-tight text-white mb-2">
+                  {APP_NAME}
+               </h1>
+               <p className="text-sm text-slate-400 font-medium">Lightning Fast Governance</p>
             </div>
 
-            <div className="bg-white/80 dark:bg-slate-900/60 backdrop-blur-xl border border-slate-200 dark:border-slate-800 p-8 rounded-3xl shadow-2xl relative overflow-hidden">
-               {/* Decorative top shimmer */}
-               <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-violet-500 via-blue-500 to-violet-500"></div>
+            {/* Content Area */}
+            <div className="p-8 bg-slate-900/50">
+               <AnimatePresence mode="wait">
+                  {isConnecting ? (
+                     <motion.div 
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="space-y-6"
+                     >
+                        <div className="text-center mb-6">
+                           <div className="inline-flex items-center justify-center p-3 bg-indigo-500/10 rounded-full mb-3">
+                              <Activity className="w-6 h-6 text-indigo-400 animate-pulse" />
+                           </div>
+                           <h3 className="text-lg font-bold text-white">Connecting...</h3>
+                           <p className="text-xs text-slate-500 font-mono mt-1 truncate">{loadingStatus?.message}</p>
+                        </div>
 
-               <div className="mb-8">
-                  <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">Welcome Back</h2>
-                  <p className="text-slate-500 dark:text-slate-400 text-sm">
-                     Connect to Google Cloud Platform to begin managing your resources.
-                  </p>
-               </div>
+                        <div className="space-y-4 px-4">
+                           <ConnectionStep label="Validate OAuth Token" active={progress < 20} completed={progress >= 20} />
+                           <ConnectionStep label="Verify IAM Permissions" active={progress >= 20 && progress < 40} completed={progress >= 40} />
+                           <ConnectionStep label="Connect Resource Manager" active={progress >= 40 && progress < 70} completed={progress >= 70} />
+                           <ConnectionStep label="Hydrate Governance Policy" active={progress >= 70 && progress < 100} completed={progress >= 100} />
+                        </div>
+                     </motion.div>
+                  ) : (
+                     <motion.form 
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="space-y-5"
+                        onSubmit={handleSubmit}
+                     >
+                        <div className="space-y-2">
+                           <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 ml-1">Workspace ID</label>
+                           <Input 
+                              value={projectId}
+                              onChange={(e) => setProjectId(e.target.value)}
+                              placeholder="gcp-project-id"
+                              required
+                              className="bg-slate-950 border-slate-800 text-white placeholder:text-slate-600 h-11 text-sm font-mono focus:border-indigo-500 focus:ring-indigo-500/20"
+                              icon={<Cloud className="w-4 h-4 text-slate-500" />}
+                           />
+                        </div>
+                        
+                        <div className="space-y-2">
+                           <div className="flex justify-between items-center ml-1">
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Access Token</label>
+                              <a 
+                                 href="https://developers.google.com/oauthplayground" 
+                                 target="_blank" 
+                                 rel="noreferrer"
+                                 className="text-[10px] text-indigo-400 hover:text-indigo-300 hover:underline flex items-center gap-1"
+                              >
+                                 Get Token <ArrowRight className="w-2.5 h-2.5" />
+                              </a>
+                           </div>
+                           <Input 
+                              type="password"
+                              value={token}
+                              onChange={(e) => setToken(e.target.value)}
+                              placeholder="oauth2-token"
+                              required
+                              className="bg-slate-950 border-slate-800 text-white placeholder:text-slate-600 h-11 text-sm font-mono focus:border-indigo-500 focus:ring-indigo-500/20"
+                              icon={<Key className="w-4 h-4 text-slate-500" />}
+                           />
+                        </div>
 
-               <form onSubmit={handleSubmit} className="space-y-5">
-                  <div className="space-y-1.5">
-                     <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 ml-1">Project ID</label>
-                     <Input 
-                        value={projectId}
-                        onChange={(e) => setProjectId(e.target.value)}
-                        placeholder="e.g. enterprise-production-001"
-                        required
-                        icon={<Cloud className="w-4 h-4" />}
-                        className="bg-slate-50 dark:bg-slate-950/50 h-11"
-                     />
-                  </div>
-                  
-                  <div className="space-y-1.5">
-                     <div className="flex justify-between items-center ml-1">
-                        <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Access Token</label>
-                        <a 
-                           href="https://developers.google.com/oauthplayground" 
-                           target="_blank" 
-                           rel="noreferrer"
-                           className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
-                        >
-                           Get Token <ArrowRight className="w-3 h-3" />
-                        </a>
-                     </div>
-                     <Input 
-                        type="password"
-                        value={token}
-                        onChange={(e) => setToken(e.target.value)}
-                        placeholder="ya29.a0..."
-                        required
-                        icon={<Key className="w-4 h-4" />}
-                        className="bg-slate-50 dark:bg-slate-950/50 h-11"
-                     />
-                     <div className="flex items-center gap-2 mt-2 text-[10px] text-slate-400 dark:text-slate-500">
-                        <Lock className="w-3 h-3" />
-                        <span>Token is stored in memory only.</span>
-                     </div>
-                  </div>
+                        <div className="pt-2">
+                           <Button 
+                              type="submit" 
+                              className="w-full h-11 font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20 transition-all"
+                              rightIcon={<ArrowRight className="w-4 h-4" />}
+                           >
+                              Secure Connect
+                           </Button>
+                        </div>
+                     </motion.form>
+                  )}
+               </AnimatePresence>
+            </div>
 
-                  <Button 
-                     type="submit" 
-                     className="w-full h-12 text-base font-semibold shadow-xl shadow-violet-500/20 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 border-none transition-all hover:scale-[1.01]"
-                     isLoading={isConnecting}
-                     rightIcon={<ArrowRight className="w-5 h-5" />}
-                  >
-                     Connect Environment
-                  </Button>
-               </form>
-
-               <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-800/50">
+            {/* Footer Actions */}
+            {!isConnecting && (
+               <div className="px-8 py-4 bg-[#080c17] border-t border-slate-800/60 flex justify-center">
                   <button 
                      type="button"
                      onClick={onDemo}
-                     className="w-full flex items-center justify-center gap-3 p-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors group"
+                     className="text-xs text-slate-500 hover:text-white transition-colors flex items-center gap-2 group"
                   >
-                     <div className="bg-slate-200 dark:bg-slate-700 p-1.5 rounded-full group-hover:scale-110 transition-transform">
-                        <PlayCircle className="w-4 h-4 text-slate-600 dark:text-slate-300" />
-                     </div>
-                     <span className="text-sm font-medium">Launch Interactive Demo</span>
+                     <span className="w-1.5 h-1.5 rounded-full bg-slate-700 group-hover:bg-emerald-500 transition-colors"></span>
+                     Initialize Demo Environment
                   </button>
                </div>
-            </div>
-            
-            <p className="text-center mt-6 text-xs text-slate-400 dark:text-slate-500 flex items-center justify-center gap-1.5">
-               <Shield className="w-3 h-3" />
-               <span>Secured by Google Cloud IAM</span>
-            </p>
+            )}
          </motion.div>
+
+         <div className="mt-6 text-center">
+            <div className="flex justify-center gap-4 text-slate-600 mb-2">
+               <div className="flex items-center gap-1.5 text-[10px] font-mono border border-slate-800 rounded px-2 py-1">
+                  <Lock className="w-3 h-3" /> E2E Encrypted
+               </div>
+               <div className="flex items-center gap-1.5 text-[10px] font-mono border border-slate-800 rounded px-2 py-1">
+                  v{APP_VERSION}
+               </div>
+            </div>
+         </div>
+
       </div>
     </div>
   );

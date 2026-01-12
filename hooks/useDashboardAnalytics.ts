@@ -14,6 +14,7 @@ export const useDashboardAnalytics = (resources: GceResource[], stats: { total: 
     const snapshotCount = resources.filter(r => r.type === 'SNAPSHOT').length;
     const cloudRunCount = resources.filter(r => r.type === 'CLOUD_RUN').length;
     const sqlCount = resources.filter(r => r.type === 'CLOUD_SQL').length;
+    const gkeCount = resources.filter(r => r.type === 'GKE_CLUSTER').length;
     
     // Storage Calculations
     let totalDiskGb = 0;
@@ -55,6 +56,15 @@ export const useDashboardAnalytics = (resources: GceResource[], stats: { total: 
     const topZones = Object.entries(zones).sort((a,b) => b[1] - a[1]).slice(0, 4);
     const maxZone = Math.max(...Object.values(zones), 1);
 
+    // GKE Cluster Distribution
+    const gkeClusters = resources.filter(r => r.type === 'GKE_CLUSTER');
+    const gkeNodeDistribution = [
+        { label: 'Small (1-3 Nodes)', value: gkeClusters.filter(c => (c.clusterDetails?.nodeCount || 0) <= 3).length },
+        { label: 'Medium (4-10 Nodes)', value: gkeClusters.filter(c => (c.clusterDetails?.nodeCount || 0) > 3 && (c.clusterDetails?.nodeCount || 0) <= 10).length },
+        { label: 'Large (10+ Nodes)', value: gkeClusters.filter(c => (c.clusterDetails?.nodeCount || 0) > 10).length },
+    ].filter(d => d.value > 0); // Only show active categories
+    const maxGkeCount = Math.max(...gkeNodeDistribution.map(d => d.value), 1);
+
     // Label Usage Distribution
     const labelCounts: Record<string, number> = {};
     resources.forEach(r => {
@@ -78,6 +88,7 @@ export const useDashboardAnalytics = (resources: GceResource[], stats: { total: 
         snapshotCount,
         cloudRunCount,
         sqlCount,
+        gkeCount,
         stoppedInstances,
         publicIpCount,
         spotCount,
@@ -86,6 +97,8 @@ export const useDashboardAnalytics = (resources: GceResource[], stats: { total: 
         topMachineTypes,
         topZones,
         maxZone,
+        gkeNodeDistribution,
+        maxGkeCount,
         labelDistribution,
         maxLabelCount,
         totalDiskGb,

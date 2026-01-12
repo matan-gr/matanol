@@ -19,7 +19,7 @@ export interface AppSettings {
   departmentList: string[];
 }
 
-export type ResourceType = 'INSTANCE' | 'DISK' | 'SNAPSHOT' | 'IMAGE' | 'CLOUD_RUN' | 'CLOUD_SQL' | 'BUCKET';
+export type ResourceType = 'INSTANCE' | 'DISK' | 'SNAPSHOT' | 'IMAGE' | 'CLOUD_RUN' | 'CLOUD_SQL' | 'BUCKET' | 'GKE_CLUSTER';
 export type ProvisioningModel = 'STANDARD' | 'SPOT' | 'RESERVED';
 
 export interface LabelHistoryEntry {
@@ -35,6 +35,7 @@ export interface ResourceDisk {
   sizeGb: number;
   type: string;
   boot: boolean;
+  interface?: string; // NVMe, SCSI
 }
 
 export interface ResourceIP {
@@ -43,26 +44,84 @@ export interface ResourceIP {
   external?: string;
 }
 
+// --- Governance Types ---
+export type PolicySeverity = 'CRITICAL' | 'WARNING' | 'INFO';
+
+export interface PolicyViolation {
+  policyId: string;
+  message: string;
+  severity: PolicySeverity;
+}
+
+export interface GovernancePolicy {
+  id: string;
+  name: string;
+  description: string;
+  isEnabled: boolean;
+  severity: PolicySeverity;
+  check: (r: GceResource) => string | null; // Returns error message or null
+}
+
+export interface TaxonomyRule {
+  key: string;
+  allowedValues: string[];
+  isRequired: boolean;
+}
+// ------------------------
+
 export interface GceResource {
   id: string;
   name: string;
+  description?: string;
   type: ResourceType;
   zone: string;
   machineType?: string;
-  sizeGb?: string; // For standalone disks
+  sizeGb?: string;
   status: string;
   creationTimestamp: string;
   
-  // FinOps Data
   provisioningModel: ProvisioningModel;
 
-  // Detailed Configuration
   disks?: ResourceDisk[];
   ips?: ResourceIP[];
-  url?: string; // For Cloud Run
-  databaseVersion?: string; // For Cloud SQL
-  storageClass?: string; // For Buckets
-  family?: string; // For Images
+  tags?: string[];
+  serviceAccount?: string;
+  
+  gpus?: { name: string; count: number }[];
+  provisionedIops?: number;
+  provisionedThroughput?: number;
+  sourceDisk?: string;
+
+  // Cloud Run Specifics
+  url?: string;
+  memory?: string;
+  cpu?: string;
+  ingress?: 'all' | 'internal' | 'internal-and-cloud-lb';
+
+  // Bucket Specifics
+  publicAccess?: boolean;
+  locationType?: string; // region, dual-region, multi-region
+
+  databaseVersion?: string;
+  storageClass?: string;
+  family?: string;
+  clusterDetails?: {
+    nodeCount: number;
+    version: string;
+    endpoint: string;
+    isAutopilot: boolean;
+    network?: string;
+    subnetwork?: string;
+    servicesIpv4Cidr?: string;
+    statusMessage?: string;
+    nodePools?: {
+      name: string;
+      version: string;
+      status: string;
+      nodeCount: number;
+      machineType?: string;
+    }[];
+  };
 
   labels: Record<string, string>;
   labelFingerprint: string;
@@ -72,6 +131,9 @@ export interface GceResource {
   isDirty?: boolean;
   history?: LabelHistoryEntry[];
   isUpdating?: boolean;
+  
+  // New Governance Field
+  violations?: PolicyViolation[];
 }
 
 export interface LogEntry {
@@ -83,7 +145,6 @@ export interface LogEntry {
   resourceName: string;
   summary: string;
   source: 'APP' | 'GCP';
-  // Rich Data
   callerIp?: string;
   userAgent?: string;
   status?: { code?: number; message?: string };
@@ -98,7 +159,7 @@ export interface AnalysisResult {
 
 export interface Notification {
   id: string;
-  type: 'success' | 'error' | 'info';
+  type: 'success' | 'error' | 'info' | 'warning';
   message: string;
 }
 
@@ -108,12 +169,15 @@ export interface FilterConfig {
   types: string[];
   zones: string[];
   machineTypes: string[];
-  hasPublicIp: boolean | null; // null = any, true = yes, false = no
+  hasPublicIp: boolean | null;
   dateStart: string;
   dateEnd: string;
   labelLogic: 'AND' | 'OR';
   labels: { key: string; value: string }[];
   showUnlabeledOnly: boolean;
+  tags?: string[];
+  // New Filter
+  showViolationsOnly?: boolean;
 }
 
 export interface SavedView {

@@ -7,7 +7,9 @@ import {
   Trash2, Plus, ArrowRight, Copy, History, 
   CheckSquare, Square, ChevronDown, ChevronRight,
   Cpu, Tag, Globe, Network, Fingerprint, Database,
-  Image as ImageIcon, Camera, Cloud, GripVertical, AlertCircle, PlayCircle, StopCircle, Box
+  Image as ImageIcon, Camera, Cloud, GripVertical, AlertCircle, PlayCircle, StopCircle, Box,
+  Ship, ShieldCheck, User, Gauge, Layers, MemoryStick, Boxes, GaugeCircle, ShieldAlert,
+  Activity, Lock, ExternalLink, Container, Anchor
 } from 'lucide-react';
 import { Button, Input, Select, Badge, Tooltip, Spinner } from './DesignSystem';
 import { validateKey, validateValue } from '../utils/validation';
@@ -46,6 +48,7 @@ export const ResourceRow = React.memo(({
   const labelCount = Object.keys(resource.labels).length;
   const isCompliant = labelCount > 0;
   const hasHistory = resource.history && resource.history.length > 0;
+  const violations = resource.violations || [];
   
   const timeAgo = useMemo(() => {
     const date = new Date(resource.creationTimestamp);
@@ -134,164 +137,230 @@ export const ResourceRow = React.memo(({
           case 'CLOUD_RUN': return Cloud;
           case 'CLOUD_SQL': return Database;
           case 'BUCKET': return Box;
+          case 'GKE_CLUSTER': return Ship;
           default: return Server;
       }
   };
   const Icon = getIcon();
   
+  // Use richer colors in light mode for "Tech Fresh" look
   const getIconColorClass = () => {
       switch(resource.type) {
-          case 'INSTANCE': return 'bg-blue-100 text-blue-600 dark:bg-blue-500/20 dark:text-blue-300';
-          case 'DISK': return 'bg-purple-100 text-purple-600 dark:bg-purple-500/20 dark:text-purple-300';
-          case 'IMAGE': return 'bg-pink-100 text-pink-600 dark:bg-pink-500/20 dark:text-pink-300';
-          case 'SNAPSHOT': return 'bg-cyan-100 text-cyan-600 dark:bg-cyan-500/20 dark:text-cyan-300';
-          case 'CLOUD_RUN': return 'bg-indigo-100 text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-300';
-          case 'CLOUD_SQL': return 'bg-orange-100 text-orange-600 dark:bg-orange-500/20 dark:text-orange-300';
-          case 'BUCKET': return 'bg-yellow-100 text-yellow-600 dark:bg-yellow-500/20 dark:text-yellow-300';
-          default: return 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400';
-      }
-  };
-
-  const getFullTypeName = () => {
-      switch(resource.type) {
-          case 'INSTANCE': return 'Virtual Machine';
-          case 'DISK': return 'Persistent Disk';
-          case 'IMAGE': return 'Machine Image';
-          case 'SNAPSHOT': return 'Disk Snapshot';
-          case 'CLOUD_RUN': return 'Cloud Run Service';
-          case 'CLOUD_SQL': return 'Cloud SQL Instance';
-          case 'BUCKET': return 'Storage Bucket';
-          default: return resource.type;
+          case 'INSTANCE': return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border-blue-200 dark:border-blue-800';
+          case 'DISK': return 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 border-purple-200 dark:border-purple-800';
+          case 'IMAGE': return 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300 border-pink-200 dark:border-pink-800';
+          case 'SNAPSHOT': return 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300 border-cyan-200 dark:border-cyan-800';
+          case 'CLOUD_RUN': return 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800';
+          case 'CLOUD_SQL': return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300 border-orange-200 dark:border-orange-800';
+          case 'BUCKET': return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800';
+          case 'GKE_CLUSTER': return 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300 border-sky-200 dark:border-sky-800';
+          default: return 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-400 border-slate-300 dark:border-slate-700';
       }
   };
 
   const statusColor = resource.status === 'RUNNING' || resource.status === 'READY' || resource.status === 'RUNNABLE'
-    ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20' 
+    ? 'text-emerald-700 bg-emerald-100 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-900/50 dark:text-emerald-400' 
     : resource.status === 'STOPPED' || resource.status === 'TERMINATED'
-      ? 'text-slate-600 bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700' 
-      : 'text-amber-700 bg-amber-50 dark:bg-amber-500/10 border-amber-200 dark:border-amber-500/20';
+      ? 'text-slate-600 bg-slate-200 dark:bg-slate-800/60 border-slate-300 dark:border-slate-700 dark:text-slate-400' 
+      : 'text-amber-700 bg-amber-100 dark:bg-amber-950/40 border-amber-200 dark:border-amber-900/50 dark:text-amber-400';
 
-  // --- Render Helpers ---
+  // Align middle for better vertical centering in spacious rows
+  const commonTdClasses = "py-5 px-5 align-middle bg-white dark:bg-slate-900 border-y border-slate-200 dark:border-slate-800 transition-colors";
 
-  const renderConfigurationCell = () => {
-    switch (resource.type) {
-        case 'INSTANCE':
-            return (
-                <div className="space-y-1.5">
-                    <div className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200">
-                        <Cpu className="w-3.5 h-3.5 text-slate-400" />
-                        <span title="Machine Type" className="tabular-nums">{resource.machineType}</span>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                        {resource.ips?.some(ip => !!ip.external) && (
-                            <Badge variant="warning" className="px-1.5 py-0 text-[10px]">Public IP</Badge>
-                        )}
-                        {resource.disks && resource.disks.length > 0 && (
-                            <Tooltip content={`${resource.disks.length} Attached Disks`}>
-                                <span className="inline-flex items-center gap-1 px-1.5 py-0 rounded text-[10px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 tabular-nums">
-                                    <HardDrive className="w-2.5 h-2.5" /> {resource.disks.length}
-                                </span>
-                            </Tooltip>
-                        )}
-                    </div>
-                </div>
-            );
-        case 'BUCKET':
-            return (
-                <div className="space-y-1.5">
-                    <div className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200">
-                        <Box className="w-3.5 h-3.5 text-slate-400" />
-                        <span title="Storage Class">{resource.storageClass}</span>
-                    </div>
-                    <div className="text-[10px] text-slate-500">Object Storage</div>
-                </div>
-            );
-        case 'CLOUD_SQL':
-            return (
-                <div className="space-y-1.5">
-                    <div className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200">
-                        <Database className="w-3.5 h-3.5 text-slate-400" />
-                        <span title="Database Version">{resource.databaseVersion?.replace('POSTGRES_', 'PG ').replace('MYSQL_', 'MySQL ')}</span>
-                    </div>
-                    <div className="text-[10px] text-slate-500 truncate max-w-[160px]" title={resource.machineType}>{resource.machineType}</div>
-                </div>
-            );
-        case 'DISK':
-            return (
-                <div className="space-y-1.5">
-                    <div className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200">
-                        <HardDrive className="w-3.5 h-3.5 text-slate-400" />
-                        <span className="tabular-nums">{resource.sizeGb} GB</span>
-                    </div>
-                    <div className="text-[10px] text-slate-500">Block Storage</div>
-                </div>
-            );
-        case 'CLOUD_RUN':
-            return (
-                <div className="space-y-1.5">
-                    <div className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200">
-                        <Zap className="w-3.5 h-3.5 text-slate-400" />
-                        <span>Serverless</span>
-                    </div>
-                    {resource.url && (
-                        <a href={resource.url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} className="text-[10px] text-blue-500 hover:underline flex items-center gap-1 max-w-[160px] truncate">
-                            <Globe className="w-2.5 h-2.5"/> {resource.url.replace('https://', '')}
-                        </a>
-                    )}
-                </div>
-            );
-        case 'IMAGE':
-            return (
-                <div className="space-y-1.5">
-                    <div className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200">
-                        <ImageIcon className="w-3.5 h-3.5 text-slate-400" />
-                        <span className="truncate max-w-[160px]" title={resource.family}>{resource.family || 'No Family'}</span>
-                    </div>
-                    <div className="text-[10px] text-slate-500 tabular-nums">{resource.sizeGb} GB Disk</div>
-                </div>
-            );
-        case 'SNAPSHOT':
-            return (
-                <div className="space-y-1.5">
-                    <div className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200">
-                        <Camera className="w-3.5 h-3.5 text-slate-400" />
-                        <span className="tabular-nums">{resource.sizeGb} GB</span>
-                    </div>
-                    <div className="text-[10px] text-slate-500">Backup</div>
-                </div>
-            );
-        default:
-            return <div className="text-slate-400 text-xs">-</div>;
+  // Helper to render specific configuration details based on type (Collapsed View)
+  const renderConfiguration = () => {
+    if (resource.type === 'DISK') {
+        return (
+            <div className="flex items-center gap-2 text-xs font-semibold text-slate-800 dark:text-slate-200">
+                <HardDrive className="w-3.5 h-3.5 text-purple-500" />
+                <span>{resource.machineType || 'Standard'}</span> 
+                <span className="text-slate-400 font-normal">|</span>
+                <span>{resource.sizeGb}GB</span>
+            </div>
+        );
     }
-  };
-
-  const renderLifecycleCell = () => {
-      // Only show Provisioning Model for INSTANCES where it matters
-      const showProvisioning = resource.type === 'INSTANCE';
-
-      return (
-        <div className="flex flex-col gap-2">
-            <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[11px] font-bold w-fit ${statusColor}`}>
-                {resource.status === 'RUNNING' || resource.status === 'READY' ? <PlayCircle className="w-3 h-3" /> : 
-                resource.status === 'STOPPED' || resource.status === 'TERMINATED' ? <StopCircle className="w-3 h-3" /> : 
-                <AlertCircle className="w-3 h-3" />}
-                {resource.status}
+    if (resource.type === 'CLOUD_SQL') {
+        return (
+            <div className="flex items-center gap-2 text-xs font-semibold text-slate-800 dark:text-slate-200">
+                <Database className="w-3.5 h-3.5 text-orange-500" />
+                <span>{resource.machineType || 'db-custom'}</span>
+                {resource.sizeGb && <span className="text-[10px] text-slate-500 font-normal">({resource.sizeGb}GB)</span>}
             </div>
-            
-            <div className="flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
-                <Clock className="w-3 h-3" />
-                <span className="tabular-nums">{timeAgo}</span>
+        );
+    }
+    if (resource.type === 'GKE_CLUSTER') {
+        return (
+            <div className="flex items-center gap-2 text-xs font-semibold text-slate-800 dark:text-slate-200">
+                <Ship className="w-3.5 h-3.5 text-sky-500" />
+                <span>{resource.clusterDetails?.nodeCount} Nodes</span>
+                <span className="text-slate-400 font-normal">v{resource.clusterDetails?.version}</span>
             </div>
-
-            {showProvisioning && resource.provisioningModel !== 'STANDARD' && (
-                <div>
-                    {resource.provisioningModel === 'SPOT' ? <Badge variant="purple" className="py-0 px-1.5 text-[10px]">Spot</Badge> : null}
-                    {resource.provisioningModel === 'RESERVED' ? <Badge variant="success" className="py-0 px-1.5 text-[10px]">Reserved</Badge> : null}
-                </div>
-            )}
+        );
+    }
+    
+    // Default VM / Other
+    return (
+        <div className="flex items-center gap-2 text-xs font-semibold text-slate-800 dark:text-slate-200 truncate max-w-[180px]" title={resource.machineType || resource.storageClass || ''}>
+            {resource.machineType ? <Cpu className="w-3.5 h-3.5 text-slate-400"/> : <Box className="w-3.5 h-3.5 text-slate-400"/>}
+            {resource.machineType || resource.storageClass || '-'}
         </div>
-      );
+    );
   };
+
+  // --- Expanded View Renderers ---
+
+  const renderVmDetails = () => (
+    <div className="space-y-4">
+       <div className="text-[10px] uppercase font-bold text-blue-500 tracking-wider mb-2 flex items-center gap-2">
+          <Server className="w-3 h-3"/> Instance Specs
+       </div>
+       <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-4">
+             <div className="bg-slate-50 dark:bg-slate-950/50 p-2 rounded-lg border border-slate-100 dark:border-slate-800">
+                <div className="text-[10px] text-slate-500 mb-1">Machine Type</div>
+                <div className="font-mono text-sm font-bold text-slate-700 dark:text-slate-200">{resource.machineType}</div>
+             </div>
+             <div className="bg-slate-50 dark:bg-slate-950/50 p-2 rounded-lg border border-slate-100 dark:border-slate-800">
+                <div className="text-[10px] text-slate-500 mb-1">Provisioning</div>
+                <div className="flex items-center gap-2">
+                   {resource.provisioningModel === 'SPOT' 
+                      ? <Badge variant="warning">Spot</Badge> 
+                      : <Badge variant="info">Standard</Badge>}
+                </div>
+             </div>
+          </div>
+          
+          {resource.disks && (
+             <div className="mt-3">
+                <div className="text-[10px] text-slate-500 mb-2">Attached Storage</div>
+                <div className="space-y-2">
+                   {resource.disks.map((d, i) => (
+                      <div key={i} className="flex items-center justify-between p-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm">
+                         <div className="flex items-center gap-3">
+                            <div className={`p-1.5 rounded ${d.boot ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600' : 'bg-purple-100 dark:bg-purple-900/30 text-purple-600'}`}>
+                               <HardDrive className="w-3.5 h-3.5" />
+                            </div>
+                            <div>
+                               <div className="text-xs font-bold text-slate-700 dark:text-slate-200">{d.deviceName}</div>
+                               <div className="text-[10px] text-slate-400">{d.type} • {d.interface || 'SCSI'}</div>
+                            </div>
+                         </div>
+                         <div className="flex items-center gap-2">
+                            <div className="w-16 h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                               <div className="h-full bg-slate-400 rounded-full" style={{ width: '100%' }}></div>
+                            </div>
+                            <span className="text-xs font-mono font-medium">{d.sizeGb}GB</span>
+                         </div>
+                      </div>
+                   ))}
+                </div>
+             </div>
+          )}
+       </div>
+    </div>
+  );
+
+  const renderBucketDetails = () => (
+    <div className="space-y-4">
+       <div className="text-[10px] uppercase font-bold text-yellow-500 tracking-wider mb-2 flex items-center gap-2">
+          <Container className="w-3 h-3"/> Bucket Config
+       </div>
+       <div className="grid grid-cols-2 gap-3">
+          <div className="p-3 bg-yellow-50/50 dark:bg-yellow-900/10 border border-yellow-100 dark:border-yellow-900/30 rounded-lg">
+             <div className="text-[10px] text-yellow-700 dark:text-yellow-500 mb-1 font-bold">Access Control</div>
+             {resource.publicAccess ? (
+                <Badge variant="error" className="flex items-center gap-1 w-fit"><Globe className="w-3 h-3"/> Public Internet</Badge>
+             ) : (
+                <Badge variant="success" className="flex items-center gap-1 w-fit"><Lock className="w-3 h-3"/> Private Access</Badge>
+             )}
+          </div>
+          <div className="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-lg">
+             <div className="text-[10px] text-slate-500 mb-1">Storage Class</div>
+             <div className="font-bold text-sm text-slate-700 dark:text-slate-200">{resource.storageClass}</div>
+          </div>
+          <div className="col-span-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-lg flex justify-between items-center">
+             <div>
+                <div className="text-[10px] text-slate-500">Location Type</div>
+                <div className="font-bold text-sm text-slate-700 dark:text-slate-200">{resource.locationType || 'Region'}</div>
+             </div>
+             <Globe className="w-5 h-5 text-slate-300" />
+          </div>
+       </div>
+    </div>
+  );
+
+  const renderGkeDetails = () => (
+    <div className="space-y-4">
+       <div className="text-[10px] uppercase font-bold text-sky-500 tracking-wider mb-2 flex items-center gap-2">
+          <Anchor className="w-3 h-3"/> Cluster Topology
+       </div>
+       <div className="space-y-3">
+          <div className="flex justify-between items-center p-3 bg-sky-50 dark:bg-sky-900/10 border border-sky-100 dark:border-sky-900/30 rounded-lg">
+             <div>
+                <div className="text-[10px] text-sky-700 dark:text-sky-400 font-bold mb-0.5">Control Plane</div>
+                <div className="text-xs text-sky-900 dark:text-sky-200">v{resource.clusterDetails?.version}</div>
+             </div>
+             {resource.clusterDetails?.isAutopilot ? <Badge variant="info">Autopilot</Badge> : <Badge variant="neutral">Standard</Badge>}
+          </div>
+
+          <div className="space-y-2">
+             <div className="flex justify-between text-[10px] text-slate-500 px-1">
+                <span>Node Pools</span>
+                <span>{resource.clusterDetails?.nodeCount} Total Nodes</span>
+             </div>
+             {resource.clusterDetails?.nodePools?.map((pool, idx) => (
+                <div key={idx} className="flex justify-between items-center p-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs">
+                   <div className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full ${pool.status === 'RUNNING' ? 'bg-emerald-500' : 'bg-slate-300'}`}></div>
+                      <span className="font-bold text-slate-700 dark:text-slate-300">{pool.name}</span>
+                   </div>
+                   <div className="flex gap-3 text-slate-500 font-mono">
+                      <span>{pool.machineType || 'auto'}</span>
+                      <span className="bg-slate-100 dark:bg-slate-800 px-1.5 rounded">{pool.nodeCount} nodes</span>
+                   </div>
+                </div>
+             ))}
+          </div>
+       </div>
+    </div>
+  );
+
+  const renderCloudRunDetails = () => (
+    <div className="space-y-4">
+       <div className="text-[10px] uppercase font-bold text-indigo-500 tracking-wider mb-2 flex items-center gap-2">
+          <Zap className="w-3 h-3"/> Service Config
+       </div>
+       <div className="space-y-3">
+          {resource.url && (
+             <a href={resource.url} target="_blank" rel="noreferrer" className="flex items-center justify-between p-3 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-900/10 dark:hover:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/30 rounded-lg group transition-colors">
+                <div className="truncate pr-4">
+                   <div className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold mb-0.5">Service URL</div>
+                   <div className="text-xs text-indigo-900 dark:text-indigo-200 truncate">{resource.url}</div>
+                </div>
+                <ExternalLink className="w-4 h-4 text-indigo-400 group-hover:text-indigo-600" />
+             </a>
+          )}
+          
+          <div className="grid grid-cols-2 gap-3">
+             <div className="p-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-center">
+                <div className="text-[10px] text-slate-400 uppercase">Memory</div>
+                <div className="font-mono text-sm font-bold text-slate-700 dark:text-slate-200">{resource.memory || '512Mi'}</div>
+             </div>
+             <div className="p-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-center">
+                <div className="text-[10px] text-slate-400 uppercase">CPU Limit</div>
+                <div className="font-mono text-sm font-bold text-slate-700 dark:text-slate-200">{resource.cpu || '1.0'}</div>
+             </div>
+          </div>
+
+          <div className="flex items-center justify-between px-3 py-2 bg-slate-50 dark:bg-slate-950 rounded-lg border border-slate-100 dark:border-slate-800">
+             <span className="text-xs text-slate-500">Ingress</span>
+             <Badge variant={resource.ingress === 'all' ? 'warning' : 'success'}>
+                {resource.ingress === 'all' ? 'All Traffic' : 'Internal Only'}
+             </Badge>
+          </div>
+       </div>
+    </div>
+  );
 
   return (
     <>
@@ -303,11 +372,9 @@ export const ResourceRow = React.memo(({
         transition={{ duration: 0.2 }}
         onClick={() => !isEditing && !resource.isUpdating && setIsExpanded(p => !p)}
         className={`
-          group border-b border-slate-200 dark:border-slate-800/60 transition-all duration-200 relative
-          ${isEditing ? 'bg-blue-50/50 dark:bg-blue-900/20' : 'hover:bg-slate-100 dark:hover:bg-slate-800/50 cursor-pointer'}
-          ${isSelected ? 'bg-blue-50/80 dark:bg-blue-900/30' : ''}
-          ${isExpanded && !isEditing ? 'bg-slate-50/80 dark:bg-slate-800/40 shadow-inner' : ''}
-          ${resource.isUpdating ? 'bg-slate-50/60 dark:bg-slate-900/60 pointer-events-none' : ''}
+          group transition-all duration-300 relative mb-4 hover:translate-y-[-2px]
+          ${isEditing ? 'z-10' : 'cursor-pointer hover:shadow-lg hover:shadow-slate-200/50 dark:hover:shadow-none'}
+          ${resource.isUpdating ? 'pointer-events-none opacity-60' : ''}
         `}
       >
         {/* Loading Overlay */}
@@ -317,98 +384,112 @@ export const ResourceRow = React.memo(({
                initial={{ opacity: 0 }}
                animate={{ opacity: 1 }}
                exit={{ opacity: 0 }}
-               className="absolute inset-0 bg-white/50 dark:bg-slate-950/50 z-10 flex items-center justify-center backdrop-blur-[1px]"
+               className="absolute inset-0 z-20 flex items-center justify-center bg-white/50 dark:bg-slate-950/50"
              >
-                <div className="h-[2px] w-full bg-blue-100 dark:bg-blue-900 absolute bottom-0">
-                   <motion.div 
-                     className="h-full bg-blue-500"
-                     initial={{ width: "0%" }}
-                     animate={{ width: "100%" }}
-                     transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
-                   />
-                </div>
              </motion.div>
           )}
         </AnimatePresence>
 
-        {/* 1. Selection Checkbox */}
-        <td className="pl-6 pr-3 py-4 align-top" onClick={e => e.stopPropagation()}>
+        {/* 1. Selection Checkbox - Rounded Left */}
+        <td className={`pl-6 pr-2 rounded-l-2xl border-l border-slate-200 dark:border-slate-800 w-16 ${commonTdClasses}`} onClick={e => e.stopPropagation()}>
           <button 
             onClick={() => onToggleSelect(resource.id)} 
             disabled={resource.isUpdating}
             className={`
-              mt-1.5 p-1 rounded transition-colors
-              ${resource.isUpdating ? 'opacity-30 cursor-not-allowed' : 'hover:bg-slate-200 dark:hover:bg-slate-700'}
-              ${isSelected ? 'text-blue-600 dark:text-blue-400' : 'text-slate-300 dark:text-slate-600'}
+              p-2 rounded-lg transition-colors
+              ${resource.isUpdating ? 'opacity-30 cursor-not-allowed' : 'hover:bg-slate-100 dark:hover:bg-slate-800'}
+              ${isSelected ? 'text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20' : 'text-slate-300 dark:text-slate-600'}
             `}
           >
-            {isSelected ? <CheckSquare className="w-5 h-5" /> : <Square className="w-5 h-5" />}
+            {isSelected ? <CheckSquare className="w-5 h-5" /> : <Square className="w-5 h-5"/>}
           </button>
         </td>
 
         {/* 2. Identity (Name, ID) */}
-        <td className={`px-4 py-4 align-top ${resource.isUpdating ? 'opacity-40' : ''}`}>
-          <div className="flex flex-col gap-1.5">
-             <div className="flex items-center gap-2">
-                <span className="font-bold text-slate-800 dark:text-slate-100 truncate text-sm leading-tight max-w-[220px]" title={resource.name}>
-                  {resource.name}
-                </span>
+        <td className={commonTdClasses}>
+          <div className="flex flex-col gap-2">
+             <div className="flex items-center gap-4">
+                {/* Distinct Icon Next to Name */}
+                <div className={`p-2.5 rounded-xl shrink-0 border ${getIconColorClass()}`}>
+                   <Icon className="w-5 h-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                    <span className="font-bold text-slate-800 dark:text-white truncate text-[15px] leading-tight block" title={resource.name}>
+                      {resource.name}
+                    </span>
+                    <div className="flex items-center gap-1.5 mt-1.5">
+                        <code className="text-[10px] text-slate-500 font-mono bg-slate-100 dark:bg-slate-800/60 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50 max-w-[160px] truncate tabular-nums select-all" title={resource.id}>
+                        {resource.id}
+                        </code>
+                        <button onClick={copyId} className="text-slate-400 hover:text-indigo-500 transition-colors opacity-0 group-hover:opacity-100">
+                        {copiedId ? <Check className="w-3 h-3 text-emerald-500"/> : <Copy className="w-3 h-3"/>}
+                        </button>
+                    </div>
+                </div>
                 {/* Dynamically change expansion indicator */}
-                {isExpanded 
-                  ? <ChevronDown className="w-3.5 h-3.5 text-slate-400 transition-transform duration-200" /> 
-                  : <ChevronRight className="w-3.5 h-3.5 text-slate-400 opacity-0 group-hover:opacity-100 transition-all duration-200" />
-                }
-             </div>
-             <div className="flex items-center gap-1.5">
-                <code className="text-[10px] text-slate-500 font-mono bg-slate-100 dark:bg-slate-800/50 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50 max-w-[140px] truncate tabular-nums" title={resource.id}>
-                   {resource.id}
-                </code>
-                <button onClick={copyId} className="text-slate-400 hover:text-blue-500 transition-colors opacity-0 group-hover:opacity-100">
-                   {copiedId ? <Check className="w-3 h-3 text-green-500"/> : <Copy className="w-3 h-3"/>}
-                </button>
+                <div className="ml-2">
+                    {isExpanded 
+                    ? <ChevronDown className="w-4 h-4 text-slate-400 transition-transform duration-200" /> 
+                    : <ChevronRight className="w-4 h-4 text-slate-400 opacity-0 group-hover:opacity-100 transition-all duration-200 transform group-hover:translate-x-1" />
+                    }
+                </div>
              </div>
           </div>
         </td>
 
         {/* 3. Infrastructure (Type, Zone) */}
-        <td className={`px-4 py-4 align-top ${resource.isUpdating ? 'opacity-40' : ''}`}>
-           <div className="flex flex-col gap-2">
+        <td className={commonTdClasses}>
+           <div className="flex flex-col gap-1.5">
               <div className="flex items-center gap-2">
-                 <Tooltip content={getFullTypeName()}>
-                    <div className={`p-1 rounded-md shrink-0 cursor-help ${getIconColorClass()}`}>
-                       <Icon className="w-3.5 h-3.5" />
-                    </div>
-                 </Tooltip>
-                 <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    {resource.type === 'INSTANCE' ? 'VM' : 
-                     resource.type === 'CLOUD_SQL' ? 'SQL' : 
-                     resource.type === 'BUCKET' ? 'Bucket' :
-                     resource.type === 'DISK' ? 'Disk' :
-                     resource.type === 'CLOUD_RUN' ? 'Service' :
+                 <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    {resource.type === 'INSTANCE' ? 'VM Instance' : 
+                     resource.type === 'CLOUD_SQL' ? 'Cloud SQL' : 
+                     resource.type === 'BUCKET' ? 'Storage Bucket' :
+                     resource.type === 'DISK' ? 'Persistent Disk' :
+                     resource.type === 'CLOUD_RUN' ? 'Cloud Run' :
+                     resource.type === 'GKE_CLUSTER' ? 'GKE Cluster' :
                      resource.type.charAt(0) + resource.type.slice(1).toLowerCase().replace('_', ' ')}
                  </span>
               </div>
               <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
-                 <RegionIcon zone={resource.zone} className="w-3.5 h-2.5 rounded-[1px] shadow-sm" />
+                 <RegionIcon zone={resource.zone} className="w-4 h-3 rounded-[2px] shadow-sm opacity-90" />
                  <span className="font-mono text-[11px] tabular-nums">{resource.zone === 'global' ? 'Global' : resource.zone}</span>
               </div>
            </div>
         </td>
 
         {/* 4. Configuration (Specs) - DYNAMIC PER TYPE */}
-        <td className={`px-4 py-4 align-top ${resource.isUpdating ? 'opacity-40' : ''}`}>
-           {renderConfigurationCell()}
+        <td className={commonTdClasses}>
+           <div className="space-y-1.5">
+              {renderConfiguration()}
+              {/* Contextual Detail based on type */}
+              <div className="text-[10px] text-slate-500 dark:text-slate-400 flex gap-2">
+                 {resource.type === 'INSTANCE' && resource.sizeGb && <span>Boot: {resource.sizeGb}GB</span>}
+                 {resource.ips?.some(i => i.external) && <span className="text-amber-600 dark:text-amber-500 font-bold">Public IP</span>}
+              </div>
+           </div>
         </td>
 
         {/* 5. State & Lifecycle - DYNAMIC */}
-        <td className={`px-4 py-4 align-top ${resource.isUpdating ? 'opacity-40' : ''}`}>
-           {renderLifecycleCell()}
+        <td className={commonTdClasses}>
+           <div className="flex flex-col gap-2">
+            <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-bold w-fit tracking-wide shadow-sm ${statusColor}`}>
+                {resource.status === 'RUNNING' || resource.status === 'READY' ? <PlayCircle className="w-3 h-3" /> : 
+                resource.status === 'STOPPED' || resource.status === 'TERMINATED' ? <StopCircle className="w-3 h-3" /> : 
+                <AlertCircle className="w-3 h-3" />}
+                {resource.status}
+            </div>
+            <div className="flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
+                <Clock className="w-3 h-3" />
+                <span className="tabular-nums font-medium">{timeAgo}</span>
+            </div>
+           </div>
         </td>
 
         {/* 6. Governance (Labels) */}
-        <td className="px-4 py-4 align-top" onClick={(e) => isEditing && e.stopPropagation()}>
+        <td className={commonTdClasses} onClick={(e) => isEditing && e.stopPropagation()}>
            {isEditing ? (
-             <div className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl shadow-xl p-4 min-w-[340px] z-20 relative animate-in fade-in zoom-in-95 duration-200">
+             <div className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl shadow-xl p-4 min-w-[340px] z-20 absolute top-4 left-0 animate-in fade-in zoom-in-95 duration-200">
                 <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-200 dark:border-slate-800">
                    <h4 className="text-xs font-bold uppercase text-slate-500 tracking-wider flex items-center gap-2">
                      <Tag className="w-3 h-3" /> Manage Labels
@@ -468,26 +549,32 @@ export const ResourceRow = React.memo(({
                 </div>
              </div>
            ) : (
-             <div className={`space-y-2 ${resource.isUpdating ? 'opacity-40' : ''}`}>
+             <div className="space-y-2">
                 <div className="flex flex-wrap gap-1.5 content-start">
                    {Object.entries(resource.labels).slice(0, 4).map(([k, v]) => (
-                      <span key={k} className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700/60 max-w-[140px] truncate" title={`${k}: ${v}`}>
+                      <span key={k} className="inline-flex items-center px-2.5 py-1 rounded text-[10px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700/60 max-w-[140px] truncate" title={`${k}: ${v}`}>
                          <span className="opacity-60 mr-1">{k}:</span> {v}
                       </span>
                    ))}
                    {Object.keys(resource.labels).length > 4 && (
                       <span className="text-[10px] text-slate-400 px-1 py-0.5">+{Object.keys(resource.labels).length - 4} more</span>
                    )}
-                   {!isCompliant && (
-                      <span className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-100 dark:border-red-900/30">
+                   {violations.length > 0 ? (
+                      <Tooltip content={`${violations.length} policy violations found`}>
+                         <span className="flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-bold bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800">
+                            <ShieldAlert className="w-3 h-3" /> {violations.length}
+                         </span>
+                      </Tooltip>
+                   ) : !isCompliant && (
+                      <span className="flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-bold bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-100 dark:border-red-900/30">
                          <X className="w-3 h-3" /> Unlabeled
                       </span>
                    )}
                 </div>
 
                 {hasProposed && (
-                   <div className="flex flex-wrap gap-1.5 p-2 rounded-lg bg-blue-50/50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-800/30 animate-in slide-in-from-left-2 duration-300">
-                      <div className="w-full text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider mb-0.5 flex items-center gap-1">
+                   <div className="flex flex-wrap gap-1.5 p-2 rounded-lg bg-indigo-50/50 dark:bg-indigo-900/10 border border-indigo-100 dark:border-indigo-800/30 animate-in slide-in-from-left-2 duration-300">
+                      <div className="w-full text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider mb-0.5 flex items-center gap-1">
                          <Zap className="w-3 h-3" /> AI Suggestion
                       </div>
                       {Object.entries(resource.proposedLabels || {}).map(([k, v]) => {
@@ -505,11 +592,11 @@ export const ResourceRow = React.memo(({
            )}
         </td>
 
-        {/* 7. Actions */}
-        <td className="pr-6 pl-4 py-4 align-top text-right w-[120px] relative z-20">
+        {/* 7. Actions - Rounded Right */}
+        <td className={`pr-6 pl-4 rounded-r-2xl border-r border-slate-200 dark:border-slate-800 relative z-20 w-[120px] ${commonTdClasses}`}>
            <div className="flex items-center justify-end gap-1 min-h-[32px]">
               {resource.isUpdating ? (
-                 <div className="flex items-center gap-2 text-blue-500 animate-in fade-in">
+                 <div className="flex items-center gap-2 text-indigo-500 animate-in fade-in">
                     <span className="text-[10px] font-bold uppercase tracking-wider">Updating</span>
                     <Spinner className="w-4 h-4" />
                  </div>
@@ -544,19 +631,19 @@ export const ResourceRow = React.memo(({
                                  className={`
                                    p-2 rounded-lg transition-colors relative group/hist
                                    ${hasHistory 
-                                     ? 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20' 
-                                     : 'text-slate-400 hover:text-blue-600 hover:bg-slate-100 dark:hover:bg-slate-800'}
+                                     ? 'text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20' 
+                                     : 'text-slate-400 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800'}
                                  `}
                                  title="View Audit History"
                               >
                                  <History className="w-4 h-4" />
                                  {hasHistory && (
-                                    <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-blue-500 rounded-full border border-white dark:border-slate-900"></span>
+                                    <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-indigo-50 rounded-full border border-white dark:border-slate-900"></span>
                                  )}
                               </button>
                               <button 
                                  onClick={startEditing} 
-                                 className="p-2 text-slate-400 hover:text-blue-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                                 className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
                                  title="Edit Labels"
                               >
                                  <Pencil className="w-4 h-4" />
@@ -570,42 +657,46 @@ export const ResourceRow = React.memo(({
         </td>
       </motion.tr>
 
-      {/* Expanded Details Panel - Conditionally Rendered */}
+      {/* Expanded Details Panel */}
       {isExpanded && !isEditing && (
-        <tr className="bg-slate-50/50 dark:bg-slate-900/20 animate-in fade-in duration-200">
-          <td colSpan={7} className="p-0">
-             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 p-6 mx-6 mb-6 mt-2 border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-950/50 shadow-sm">
-                {/* ... (Existing Details Content remains unchanged) ... */}
-                {/* Column 1: Core IDs & Fingerprint */}
+        <tr>
+          <td colSpan={7} className="p-0 border-none">
+             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 p-6 mx-6 mb-6 -mt-2 border border-slate-200 dark:border-slate-800 rounded-b-2xl bg-slate-50 dark:bg-slate-950 shadow-inner relative z-0">
+                <div className="absolute top-0 left-0 right-0 h-2 bg-gradient-to-b from-black/5 to-transparent dark:from-black/20 pointer-events-none"></div>
+                
+                {/* Column 1: Identity & Violations */}
                 <div className="space-y-4">
                    <div>
                      <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2 flex items-center gap-2">
-                        <Fingerprint className="w-3 h-3"/> Identity & Security
+                        <Fingerprint className="w-3 h-3"/> Identity & Policy
                      </div>
                      <div className="space-y-2">
                         <div className="group relative">
                           <label className="text-[10px] text-slate-500 block">Resource ID</label>
-                          <div className="flex items-center gap-2">
-                             <code className="text-xs font-mono text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-900 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-800 break-all tabular-nums">
-                                {resource.id}
-                             </code>
-                             <button onClick={copyId} className="text-slate-400 hover:text-blue-500 transition-colors">
-                                {copiedId ? <Check className="w-3 h-3 text-green-500"/> : <Copy className="w-3 h-3"/>}
-                             </button>
-                          </div>
-                        </div>
-                        <div>
-                          <label className="text-[10px] text-slate-500 block">Label Fingerprint</label>
-                          <code className="text-[10px] font-mono text-slate-500 truncate block tabular-nums" title={resource.labelFingerprint}>
-                            {resource.labelFingerprint}
+                          <code className="text-xs font-mono text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-800 break-all tabular-nums">
+                             {resource.id}
                           </code>
                         </div>
-                        {resource.url && (
+                        
+                        {/* Violations List */}
+                        {violations.length > 0 && (
+                           <div className="bg-red-50 dark:bg-red-950/20 border border-red-100 dark:border-red-900/30 rounded-lg p-3 space-y-2">
+                              <label className="text-[10px] uppercase font-bold text-red-500 tracking-wider">Policy Violations</label>
+                              {violations.map((v, i) => (
+                                 <div key={i} className="flex gap-2 text-xs text-red-700 dark:text-red-300">
+                                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                                    <span>{v.message}</span>
+                                 </div>
+                              ))}
+                           </div>
+                        )}
+                        {resource.serviceAccount && (
                            <div>
-                              <label className="text-[10px] text-slate-500 block">Service URL</label>
-                              <a href={resource.url} target="_blank" rel="noreferrer" className="text-xs text-blue-500 hover:underline flex items-center gap-1">
-                                {resource.url} <Globe className="w-3 h-3"/>
-                              </a>
+                              <label className="text-[10px] text-slate-500 block">Service Account</label>
+                              <div className="flex items-center gap-1.5 text-xs text-slate-700 dark:text-slate-300 break-all">
+                                 <User className="w-3 h-3 text-slate-400 shrink-0" />
+                                 {resource.serviceAccount}
+                              </div>
                            </div>
                         )}
                      </div>
@@ -622,109 +713,110 @@ export const ResourceRow = React.memo(({
                         <label className="text-[10px] text-slate-500 block">Created At</label>
                         <div className="text-xs font-medium text-slate-700 dark:text-slate-200 tabular-nums">
                            {new Date(resource.creationTimestamp).toLocaleDateString()}
-                           <span className="text-slate-400 font-normal ml-1">{new Date(resource.creationTimestamp).toLocaleTimeString()}</span>
                         </div>
                      </div>
-                     {resource.type === 'INSTANCE' && (
+                     <div>
+                        <label className="text-[10px] text-slate-500 block">Provisioning Model</label>
+                        <div className="text-xs font-medium text-slate-700 dark:text-slate-200">
+                           {resource.provisioningModel || 'Standard'}
+                        </div>
+                     </div>
+                     {resource.description && (
                         <div>
-                            <label className="text-[10px] text-slate-500 block">Provisioning Model</label>
-                            <div className="flex items-center gap-1.5 mt-0.5">
-                            {resource.provisioningModel === 'SPOT' ? (
-                                <Badge variant="purple" className="py-0">Spot Instance</Badge>
-                            ) : resource.provisioningModel === 'RESERVED' ? (
-                                <Badge variant="success" className="py-0">Reserved</Badge>
-                            ) : (
-                                <Badge variant="neutral" className="py-0">On-Demand</Badge>
-                            )}
-                            </div>
+                           <label className="text-[10px] text-slate-500 block">Description</label>
+                           <p className="text-xs text-slate-600 dark:text-slate-400 italic">
+                              "{resource.description}"
+                           </p>
                         </div>
                      )}
                    </div>
                 </div>
 
-                {/* Column 3: Network (IPs) */}
-                {(resource.type === 'INSTANCE' || resource.type === 'CLOUD_SQL') && (
-                    <div className="space-y-4">
-                        <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2 flex items-center gap-2">
-                            <Network className="w-3 h-3"/> Network Interfaces
-                        </div>
-                        {resource.ips && resource.ips.length > 0 ? (
-                            <div className="space-y-2">
-                                {resource.ips.map((ip, i) => (
-                                <div key={i} className="text-xs bg-slate-50 dark:bg-slate-900 p-2 rounded border border-slate-100 dark:border-slate-800">
-                                    <div className="flex justify-between items-center mb-1">
-                                        <span className="font-semibold text-slate-700 dark:text-slate-300">{ip.network}</span>
-                                        {ip.external && <Globe className="w-3 h-3 text-blue-500" />}
-                                    </div>
-                                    <div className="font-mono text-[10px] text-slate-500 tabular-nums">
-                                        <div>Int: {ip.internal}</div>
-                                        {ip.external && <div className="text-blue-600 dark:text-blue-400">Ext: {ip.external}</div>}
-                                    </div>
-                                </div>
-                                ))}
+                {/* Column 3: Network */}
+                <div className="space-y-4">
+                   <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2 flex items-center gap-2">
+                      <Network className="w-3 h-3"/> Network & Tags
+                   </div>
+                   <div className="space-y-3">
+                      {resource.tags && resource.tags.length > 0 && (
+                         <div>
+                            <label className="text-[10px] text-slate-500 block mb-1">Network Tags</label>
+                            <div className="flex flex-wrap gap-1">
+                               {resource.tags.map((tag, i) => (
+                                  <span key={i} className="px-1.5 py-0.5 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 rounded text-[10px] font-mono border border-slate-200 dark:border-slate-700">
+                                     {tag}
+                                  </span>
+                               ))}
                             </div>
-                        ) : (
-                            <div className="text-xs text-slate-400 italic">No network interfaces detected.</div>
-                        )}
+                         </div>
+                      )}
+                      {resource.ips && resource.ips.length > 0 ? (
+                        resource.ips.map((ip, i) => (
+                           <div key={i}>
+                              <label className="text-[10px] text-slate-500 block">IP ({ip.network})</label>
+                              <code className="text-xs font-mono text-slate-700 dark:text-slate-300 block select-all">
+                                 {ip.external || ip.internal}
+                              </code>
+                           </div>
+                        ))
+                      ) : (
+                        <div className="text-xs text-slate-400 italic">No network interfaces</div>
+                      )}
+                   </div>
+                </div>
+
+                {/* Column 4: SPECIALIZED DETAILS */}
+                {resource.type === 'INSTANCE' && renderVmDetails()}
+                {resource.type === 'BUCKET' && renderBucketDetails()}
+                {resource.type === 'GKE_CLUSTER' && renderGkeDetails()}
+                {resource.type === 'CLOUD_RUN' && renderCloudRunDetails()}
+                
+                {/* Fallback for generic types (Disks, SQL) */}
+                {!['INSTANCE', 'BUCKET', 'GKE_CLUSTER', 'CLOUD_RUN'].includes(resource.type) && (
+                    <div className="space-y-4">
+                       <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2 flex items-center gap-2">
+                          <HardDrive className="w-3 h-3"/> Config Details
+                       </div>
+                       <div className="space-y-3">
+                          {/* SQL Special Handling */}
+                          {resource.type === 'CLOUD_SQL' && (
+                             <div className="p-3 bg-orange-50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-800 rounded-lg space-y-2">
+                                <div className="flex justify-between">
+                                   <span className="text-xs text-orange-800 dark:text-orange-200 font-bold">DB Tier</span>
+                                   <span className="text-xs font-mono">{resource.machineType}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                   <span className="text-xs text-orange-800 dark:text-orange-200 font-bold">Version</span>
+                                   <span className="text-xs font-mono">{resource.databaseVersion || 'Postgres'}</span>
+                                </div>
+                             </div>
+                          )}
+
+                          {/* Disk Special Handling */}
+                          {resource.type === 'DISK' && (
+                             <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div className="p-2 bg-purple-50 dark:bg-purple-900/10 rounded border border-purple-100 dark:border-purple-800">
+                                   <div className="text-[10px] text-purple-500 uppercase font-bold">IOPS</div>
+                                   <div className="font-mono text-sm">{resource.provisionedIops || 'N/A'}</div>
+                                </div>
+                                <div className="p-2 bg-purple-50 dark:bg-purple-900/10 rounded border border-purple-100 dark:border-purple-800">
+                                   <div className="text-[10px] text-purple-500 uppercase font-bold">Throughput</div>
+                                   <div className="font-mono text-sm">{resource.provisionedThroughput || 'N/A'} MB/s</div>
+                                </div>
+                             </div>
+                          )}
+                          
+                          {/* Generic Fallback */}
+                          <div className="p-3 bg-slate-100 dark:bg-slate-900 rounded-lg">
+                             <div className="text-[10px] text-slate-500 mb-1">Configuration</div>
+                             <div className="font-mono text-sm text-slate-700 dark:text-slate-300">
+                                {resource.machineType || resource.storageClass || 'Standard Config'}
+                             </div>
+                          </div>
+                       </div>
                     </div>
                 )}
 
-                {/* Column 4: Storage (Disks/Specs) - DYNAMIC */}
-                <div className="space-y-4">
-                   <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2 flex items-center gap-2">
-                      {resource.type === 'BUCKET' ? <Box className="w-3 h-3"/> : 
-                       resource.type === 'CLOUD_SQL' ? <Database className="w-3 h-3"/> :
-                       <HardDrive className="w-3 h-3"/>} 
-                      {resource.type === 'BUCKET' ? 'Storage Specs' : resource.type === 'CLOUD_SQL' ? 'DB Specs' : 'Storage'}
-                   </div>
-                   
-                   {resource.type === 'CLOUD_SQL' ? (
-                      <div className="space-y-2">
-                         <div className="text-xs bg-slate-50 dark:bg-slate-900 p-2 rounded border border-slate-100 dark:border-slate-800">
-                            <span className="font-semibold text-slate-700 dark:text-slate-300">Database Engine</span>
-                            <div className="font-mono mt-1 text-slate-600 dark:text-slate-400">{resource.databaseVersion}</div>
-                         </div>
-                         <div className="text-xs bg-slate-50 dark:bg-slate-900 p-2 rounded border border-slate-100 dark:border-slate-800">
-                            <span className="font-semibold text-slate-700 dark:text-slate-300">Machine Tier</span>
-                            <div className="font-mono mt-1 text-slate-600 dark:text-slate-400">{resource.machineType}</div>
-                         </div>
-                      </div>
-                   ) : resource.type === 'BUCKET' ? (
-                      <div className="text-xs bg-slate-50 dark:bg-slate-900 p-2 rounded border border-slate-100 dark:border-slate-800">
-                         <span className="font-semibold text-slate-700 dark:text-slate-300">Storage Class</span>
-                         <div className="font-mono mt-1 text-slate-600 dark:text-slate-400">{resource.storageClass}</div>
-                      </div>
-                   ) : resource.type === 'IMAGE' ? (
-                      <div className="text-xs bg-slate-50 dark:bg-slate-900 p-2 rounded border border-slate-100 dark:border-slate-800">
-                         <span className="font-semibold text-slate-700 dark:text-slate-300">Image Family</span>
-                         <div className="font-mono mt-1 text-slate-600 dark:text-slate-400">{resource.family || 'N/A'}</div>
-                      </div>
-                   ) : resource.disks && resource.disks.length > 0 ? (
-                      <div className="space-y-2">
-                         {resource.disks.map((d, i) => (
-                           <div key={i} className="flex items-center justify-between text-xs bg-slate-50 dark:bg-slate-900 p-2 rounded border border-slate-100 dark:border-slate-800">
-                              <div className="flex flex-col">
-                                 <span className="font-semibold text-slate-700 dark:text-slate-300 truncate max-w-[120px]" title={d.deviceName}>
-                                   {d.deviceName}
-                                 </span>
-                                 <span className="text-[10px] text-slate-500">{d.type}</span>
-                              </div>
-                              <div className="text-right">
-                                 <div className="font-mono font-bold text-slate-700 dark:text-slate-300 tabular-nums">{d.sizeGb} GB</div>
-                                 {d.boot && <Badge variant="info" className="py-0 px-1 text-[9px]">Boot</Badge>}
-                              </div>
-                           </div>
-                         ))}
-                      </div>
-                   ) : resource.sizeGb ? (
-                       <div className="text-xs bg-slate-50 dark:bg-slate-900 p-2 rounded border border-slate-100 dark:border-slate-800">
-                          <span className="font-semibold text-slate-700 dark:text-slate-300">Disk Size</span>
-                          <div className="font-mono font-bold mt-1 tabular-nums">{resource.sizeGb} GB</div>
-                       </div>
-                   ) : (
-                      <div className="text-xs text-slate-400 italic">No specific storage details.</div>
-                   )}
-                </div>
              </div>
           </td>
         </tr>

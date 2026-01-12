@@ -1,15 +1,16 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { FilterConfig, SavedView } from '../types';
 import { 
   Search, Download, Plus, X, 
-  ChevronLeft, ChevronRight, Check,
-  Filter, Tag, Save, RefreshCw,
+  Filter, Save, RefreshCw,
   Server, Database, Cloud, 
   HardDrive, Image as ImageIcon, Camera, Box,
-  Bookmark, LayoutList
+  Bookmark, SlidersHorizontal, Trash2, Ship,
+  Wand2, ChevronLeft, ChevronRight
 } from 'lucide-react';
 import { Button, Input, MultiSelect, ToggleSwitch, Select, Badge } from './DesignSystem';
+import { motion, AnimatePresence } from 'framer-motion';
 
 // --- Filters ---
 export interface ResourceFiltersProps {
@@ -19,8 +20,9 @@ export interface ResourceFiltersProps {
   onDownload: () => void;
   onToggleShow: () => void;
   onSaveView: (name: string) => void;
-  savedViews?: SavedView[]; // Added to allow quick loading
-  onLoadView?: (view: SavedView) => void; // Added handler
+  savedViews?: SavedView[]; 
+  onLoadView?: (view: SavedView) => void; 
+  onDeleteView?: (id: string) => void;
   availableZones: string[];
   availableMachineTypes: string[];
   availableLabelKeys: string[];
@@ -36,14 +38,36 @@ export interface ResourceFiltersProps {
   isRefreshing?: boolean;
 }
 
+const RESOURCE_TYPES = [
+  { id: 'INSTANCE', label: 'VM Instances', icon: Server },
+  { id: 'GKE_CLUSTER', label: 'GKE Clusters', icon: Ship },
+  { id: 'CLOUD_SQL', label: 'Cloud SQL', icon: Database },
+  { id: 'CLOUD_RUN', label: 'Cloud Run', icon: Cloud },
+  { id: 'BUCKET', label: 'Buckets', icon: Box },
+  { id: 'DISK', label: 'Disks', icon: HardDrive },
+  { id: 'IMAGE', label: 'Images', icon: ImageIcon },
+  { id: 'SNAPSHOT', label: 'Snapshots', icon: Camera },
+];
+
 export const ResourceFilters = React.memo(({ 
-  config, onChange, show, onDownload, onToggleShow, onSaveView, savedViews = [], onLoadView,
+  config, onChange, show, onDownload, onToggleShow, onSaveView, savedViews = [], onLoadView, onDeleteView,
   availableZones, availableMachineTypes, availableLabelKeys,
   groupBy, onGroupByChange,
   counts, onRefresh, isRefreshing
 }: ResourceFiltersProps) => {
   const [viewName, setViewName] = useState('');
-  const [isSavingView, setIsSavingView] = useState(false);
+  const [isViewsOpen, setIsViewsOpen] = useState(false);
+  const viewsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (viewsRef.current && !viewsRef.current.contains(event.target as Node)) {
+        setIsViewsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const handleLabelChange = (idx: number, field: 'key' | 'value', val: string) => {
     const newLabels = [...config.labels];
@@ -76,7 +100,7 @@ export const ResourceFilters = React.memo(({
       let count = 0;
       if (config.search) count++;
       count += config.statuses.length;
-      count += config.types.length;
+      // count += config.types.length; // Exclude types from the "Filters" button count since they are visible
       count += config.zones.length;
       count += config.machineTypes.length;
       if (config.hasPublicIp !== null) count++;
@@ -88,14 +112,14 @@ export const ResourceFilters = React.memo(({
   }, [config]);
 
   return (
-    <div className="border-b border-slate-200 dark:border-slate-800 bg-white/40 dark:bg-slate-900/40 backdrop-blur-md sticky top-0 z-20 transition-all duration-300">
-      {/* Toolbar */}
-      <div className="p-4 flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center">
+    <div className="border-b border-slate-200 dark:border-slate-800 bg-white/40 dark:bg-slate-900/40 backdrop-blur-md sticky top-0 z-20 transition-all duration-300 shadow-sm">
+      {/* Toolbar Row 1: Search & Controls */}
+      <div className="p-4 pb-2 flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center">
         <div className="flex flex-col gap-2 w-full sm:max-w-2xl">
             <div className="flex gap-2 w-full">
                 <Input 
                 icon={<Search className="w-4 h-4"/>} 
-                placeholder="Filter resources by name, ID, or IP..." 
+                placeholder="Search by name, labels, tags, or IDs..." 
                 value={config.search} 
                 onChange={e => onChange({ ...config, search: e.target.value })}
                 className="w-full shadow-sm border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/80 focus:ring-2 focus:ring-blue-500/20"
@@ -113,57 +137,9 @@ export const ResourceFilters = React.memo(({
                     </Select>
                 </div>
             </div>
-
-            {/* Visual Active Filters (The "Chips" Area) */}
-            {activeFiltersCount > 0 && !show && (
-                <div className="flex flex-wrap gap-2 items-center animate-in fade-in slide-in-from-top-1">
-                    {config.search && (
-                        <Badge variant="info" className="pl-2 pr-1 py-0.5 flex items-center gap-1">
-                            Text: {config.search}
-                            <button onClick={() => removeFilter('search')} className="hover:bg-blue-200 dark:hover:bg-blue-800 rounded-full p-0.5"><X className="w-3 h-3"/></button>
-                        </Badge>
-                    )}
-                    {config.types.map(t => (
-                        <Badge key={t} variant="purple" className="pl-2 pr-1 py-0.5 flex items-center gap-1">
-                            Type: {t}
-                            <button onClick={() => removeFilter('types', t)} className="hover:bg-purple-200 dark:hover:bg-purple-800 rounded-full p-0.5"><X className="w-3 h-3"/></button>
-                        </Badge>
-                    ))}
-                    {config.statuses.map(s => (
-                        <Badge key={s} variant="neutral" className="pl-2 pr-1 py-0.5 flex items-center gap-1">
-                            {s}
-                            <button onClick={() => removeFilter('statuses', s)} className="hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full p-0.5"><X className="w-3 h-3"/></button>
-                        </Badge>
-                    ))}
-                    {config.zones.map(z => (
-                        <Badge key={z} variant="info" className="pl-2 pr-1 py-0.5 flex items-center gap-1">
-                            {z}
-                            <button onClick={() => removeFilter('zones', z)} className="hover:bg-blue-200 dark:hover:bg-blue-800 rounded-full p-0.5"><X className="w-3 h-3"/></button>
-                        </Badge>
-                    ))}
-                    {config.labels.map((l, idx) => l.key ? (
-                        <Badge key={idx} variant="warning" className="pl-2 pr-1 py-0.5 flex items-center gap-1">
-                            {l.key}{l.value ? `:${l.value}` : ''}
-                            <button onClick={() => removeFilter('labels', idx)} className="hover:bg-amber-200 dark:hover:bg-amber-800 rounded-full p-0.5"><X className="w-3 h-3"/></button>
-                        </Badge>
-                    ) : null)}
-                    {config.showUnlabeledOnly && (
-                        <Badge variant="error" className="pl-2 pr-1 py-0.5 flex items-center gap-1">
-                            Unlabeled Only
-                            <button onClick={() => removeFilter('showUnlabeledOnly')} className="hover:bg-red-200 dark:hover:bg-red-800 rounded-full p-0.5"><X className="w-3 h-3"/></button>
-                        </Badge>
-                    )}
-                    <button 
-                        onClick={() => onChange({ ...config, search: '', statuses: [], types: [], zones: [], machineTypes: [], hasPublicIp: null, dateStart: '', dateEnd: '', labels: [], showUnlabeledOnly: false })}
-                        className="text-[10px] text-slate-500 hover:text-red-500 underline decoration-dotted"
-                    >
-                        Clear All
-                    </button>
-                </div>
-            )}
         </div>
 
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
             {onRefresh && (
                 <Button 
                     variant="ghost" 
@@ -176,12 +152,78 @@ export const ResourceFilters = React.memo(({
                     Refresh
                 </Button>
             )}
+            
+            {/* Views Dropdown */}
+            <div className="relative" ref={viewsRef}>
+                <Button 
+                    variant="outline" 
+                    size="md" 
+                    onClick={() => setIsViewsOpen(!isViewsOpen)}
+                    leftIcon={<Bookmark className="w-4 h-4" />}
+                    className={isViewsOpen ? 'bg-slate-100 dark:bg-slate-800' : ''}
+                >
+                    Views
+                </Button>
+                <AnimatePresence>
+                    {isViewsOpen && (
+                        <motion.div 
+                            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                            className="absolute right-0 mt-2 w-64 bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-slate-200 dark:border-slate-800 z-50 overflow-hidden"
+                        >
+                            <div className="p-3 border-b border-slate-100 dark:border-slate-800">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Save Current View</span>
+                                <div className="flex items-center gap-2 mt-2">
+                                    <input 
+                                        autoFocus
+                                        className="flex-1 bg-slate-50 dark:bg-slate-950 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 outline-none focus:border-indigo-500"
+                                        placeholder="Name..."
+                                        value={viewName}
+                                        onChange={e => setViewName(e.target.value)}
+                                        onKeyDown={e => { if(e.key === 'Enter' && viewName) { onSaveView(viewName); setViewName(''); setIsViewsOpen(false); } }}
+                                    />
+                                    <button 
+                                        onClick={() => { if(viewName) { onSaveView(viewName); setViewName(''); setIsViewsOpen(false); }}}
+                                        className="p-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded transition-colors"
+                                    >
+                                        <Save className="w-3 h-3"/>
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <div className="max-h-[200px] overflow-y-auto p-1 custom-scrollbar">
+                                {savedViews.length === 0 && (
+                                    <div className="text-center py-4 text-xs text-slate-400 italic">No saved views</div>
+                                )}
+                                {savedViews.map(view => (
+                                    <div key={view.id} className="flex items-center justify-between p-2 hover:bg-slate-50 dark:hover:bg-slate-800 rounded group">
+                                        <button 
+                                            onClick={() => { onLoadView?.(view); setIsViewsOpen(false); }}
+                                            className="text-xs text-slate-700 dark:text-slate-300 font-medium truncate flex-1 text-left"
+                                        >
+                                            {view.name}
+                                        </button>
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); onDeleteView?.(view.id); }}
+                                            className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-red-500 rounded transition-all"
+                                        >
+                                            <Trash2 className="w-3 h-3" />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+            </div>
+
             <Button variant="outline" size="md" onClick={onDownload} leftIcon={<Download className="w-4 h-4"/>}>Export</Button>
             <Button 
               variant="primary" 
               size="md" 
               onClick={onToggleShow}
-              leftIcon={show ? <X className="w-4 h-4" /> : <Filter className="w-4 h-4"/>}
+              leftIcon={show ? <X className="w-4 h-4" /> : <SlidersHorizontal className="w-4 h-4"/>}
               className={show ? 'shadow-inner bg-slate-800 border-slate-800 text-white' : ''}
             >
               {show ? 'Close' : `Filters ${activeFiltersCount > 0 ? `(${activeFiltersCount})` : ''}`}
@@ -189,79 +231,99 @@ export const ResourceFilters = React.memo(({
         </div>
       </div>
 
-      {/* Expanded Filters */}
+      {/* Toolbar Row 2: Always Visible Resource Types */}
+      <div className="px-4 pb-3 overflow-x-auto no-scrollbar">
+         <div className="flex gap-2 items-center min-w-max">
+             <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mr-1 sticky left-0 bg-white/40 dark:bg-slate-900/40 backdrop-blur-md z-10 py-1">Type:</span>
+             {RESOURCE_TYPES.map(type => {
+                const isSelected = config.types.includes(type.id);
+                const count = counts.types[type.id] || 0;
+                return (
+                   <button
+                      key={type.id}
+                      onClick={() => {
+                         const newTypes = isSelected 
+                            ? config.types.filter(t => t !== type.id)
+                            : [...config.types, type.id];
+                         onChange({ ...config, types: newTypes });
+                      }}
+                      className={`
+                         flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all border
+                         ${isSelected 
+                           ? 'bg-blue-600 border-blue-600 text-white shadow-md shadow-blue-500/20 scale-105' 
+                           : 'bg-white dark:bg-slate-950/50 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:border-indigo-300 dark:hover:border-indigo-700 hover:text-indigo-600 dark:hover:text-indigo-300'}
+                      `}
+                   >
+                      <type.icon className="w-3.5 h-3.5 opacity-80" />
+                      {type.label}
+                      <span className={`ml-1 text-[9px] px-1.5 py-px rounded-full font-mono ${isSelected ? 'bg-white/20 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-500'}`}>
+                         {count}
+                      </span>
+                   </button>
+                )
+             })}
+             {config.types.length > 0 && (
+                <button 
+                   onClick={() => onChange({ ...config, types: [] })}
+                   className="ml-2 text-[10px] text-slate-400 hover:text-red-500 transition-colors flex items-center gap-1 bg-slate-50 dark:bg-slate-900/50 px-2 py-1 rounded border border-transparent hover:border-red-200 dark:hover:border-red-900/30"
+                >
+                   <X className="w-3 h-3" /> Clear
+                </button>
+             )}
+         </div>
+      </div>
+
+      {/* Visual Active Filters (The "Chips" Area) */}
+      {/* We check show activeFiltersCount (which excludes types) > 0 OR showUnlabeledOnly/search etc.
+          Logic: If any filter BESIDES types is active, and the panel is closed, show these chips.
+      */}
+      {activeFiltersCount > 0 && !show && (
+        <div className="px-4 pb-3 flex flex-wrap gap-2 items-center animate-in fade-in slide-in-from-top-1">
+            {config.search && (
+                <Badge variant="info" className="pl-2 pr-1 py-0.5 flex items-center gap-1">
+                    Text: {config.search}
+                    <button onClick={() => removeFilter('search')} className="hover:bg-blue-200 dark:hover:bg-blue-800 rounded-full p-0.5"><X className="w-3 h-3"/></button>
+                </Badge>
+            )}
+            {/* Note: Types are now visible above, so we don't render them here to avoid duplication */}
+            {config.statuses.map(s => (
+                <Badge key={s} variant="neutral" className="pl-2 pr-1 py-0.5 flex items-center gap-1">
+                    {s}
+                    <button onClick={() => removeFilter('statuses', s)} className="hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full p-0.5"><X className="w-3 h-3"/></button>
+                </Badge>
+            ))}
+            {config.zones.map(z => (
+                <Badge key={z} variant="info" className="pl-2 pr-1 py-0.5 flex items-center gap-1">
+                    {z}
+                    <button onClick={() => removeFilter('zones', z)} className="hover:bg-blue-200 dark:hover:bg-blue-800 rounded-full p-0.5"><X className="w-3 h-3"/></button>
+                </Badge>
+            ))}
+            {config.labels.map((l, idx) => l.key ? (
+                <Badge key={idx} variant="warning" className="pl-2 pr-1 py-0.5 flex items-center gap-1">
+                    {l.key}{l.value ? `:${l.value}` : ''}
+                    <button onClick={() => removeFilter('labels', idx)} className="hover:bg-amber-200 dark:hover:bg-amber-800 rounded-full p-0.5"><X className="w-3 h-3"/></button>
+                </Badge>
+            ) : null)}
+            {config.showUnlabeledOnly && (
+                <Badge variant="error" className="pl-2 pr-1 py-0.5 flex items-center gap-1">
+                    Unlabeled Only
+                    <button onClick={() => removeFilter('showUnlabeledOnly')} className="hover:bg-red-200 dark:hover:bg-red-800 rounded-full p-0.5"><X className="w-3 h-3"/></button>
+                </Badge>
+            )}
+            <button 
+                onClick={() => onChange({ ...config, search: '', statuses: [], types: [], zones: [], machineTypes: [], hasPublicIp: null, dateStart: '', dateEnd: '', labels: [], showUnlabeledOnly: false })}
+                className="text-[10px] text-slate-500 hover:text-red-500 underline decoration-dotted ml-1"
+            >
+                Reset All Filters
+            </button>
+        </div>
+      )}
+
+      {/* Expanded Filters Panel */}
       {show && (
         <div className="px-6 py-6 border-t border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/80 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 animate-in slide-in-from-top-2 duration-300 relative">
            
-           {/* Saved Views Quick Load */}
-           <div className="md:col-span-4 flex items-center justify-between bg-white dark:bg-slate-950 p-3 rounded-lg border border-slate-200 dark:border-slate-800 mb-2">
-               <div className="flex items-center gap-3">
-                   <Bookmark className="w-4 h-4 text-indigo-500" />
-                   <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Saved Views</span>
-                   <div className="flex gap-2">
-                       {savedViews.map(view => (
-                           <button
-                               key={view.id}
-                               onClick={() => onLoadView?.(view)}
-                               className="px-2 py-1 bg-slate-100 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 text-slate-600 dark:text-slate-300 text-xs rounded border border-slate-200 dark:border-slate-700 transition-colors"
-                           >
-                               {view.name}
-                           </button>
-                       ))}
-                       {savedViews.length === 0 && <span className="text-xs text-slate-400 italic">No saved views yet. Configure filters and click 'Save View'.</span>}
-                   </div>
-               </div>
-           </div>
-
-           {/* Visual Resource Type Filter */}
-           <div className="md:col-span-4 mb-2">
-              <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-3 block">Resource Type</label>
-              <div className="flex flex-wrap gap-2">
-                 {[
-                   { id: 'INSTANCE', label: 'VM Instances', icon: Server },
-                   { id: 'CLOUD_SQL', label: 'Cloud SQL', icon: Database },
-                   { id: 'CLOUD_RUN', label: 'Cloud Run', icon: Cloud },
-                   { id: 'BUCKET', label: 'Buckets', icon: Box },
-                   { id: 'DISK', label: 'Disks', icon: HardDrive },
-                   { id: 'IMAGE', label: 'Images', icon: ImageIcon },
-                   { id: 'SNAPSHOT', label: 'Snapshots', icon: Camera },
-                 ].map(type => {
-                    const isSelected = config.types.includes(type.id);
-                    const count = counts.types[type.id] || 0;
-                    return (
-                       <button
-                          key={type.id}
-                          onClick={() => {
-                             const newTypes = isSelected 
-                                ? config.types.filter(t => t !== type.id)
-                                : [...config.types, type.id];
-                             onChange({ ...config, types: newTypes });
-                          }}
-                          className={`
-                             flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all border
-                             ${isSelected 
-                               ? 'bg-blue-600 border-blue-600 text-white shadow-md shadow-blue-500/20' 
-                               : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'}
-                          `}
-                       >
-                          <type.icon className="w-3.5 h-3.5" />
-                          {type.label}
-                          <span className={`ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full ${isSelected ? 'bg-white/20 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'}`}>
-                             {count}
-                          </span>
-                       </button>
-                    )
-                 })}
-                 {config.types.length > 0 && (
-                    <button 
-                       onClick={() => onChange({ ...config, types: [] })}
-                       className="text-[10px] text-slate-400 hover:text-red-500 underline decoration-dotted underline-offset-2 transition-colors ml-2"
-                    >
-                       Clear Type Filter
-                    </button>
-                 )}
-              </div>
-           </div>
+           {/* Resource Type Filter REMOVED (Moved to top) */}
 
            <div>
               <MultiSelect 
@@ -343,7 +405,7 @@ export const ResourceFilters = React.memo(({
            <div className="md:col-span-4 border-t border-slate-200 dark:border-slate-800 pt-6">
               <div className="flex flex-wrap items-center justify-between mb-4 gap-4">
                  <div className="flex items-center gap-6">
-                    <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Advanced Label Filters</label>
+                    <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Advanced Filtering</label>
                     <ToggleSwitch 
                         checked={config.showUnlabeledOnly} 
                         onChange={(checked) => onChange({...config, showUnlabeledOnly: checked})}
@@ -351,7 +413,7 @@ export const ResourceFilters = React.memo(({
                     />
                  </div>
                  <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1 bg-white dark:bg-slate-950 rounded-lg p-1 border border-slate-200 dark:border-slate-800 mr-4">
+                    <div className="flex items-center gap-1 bg-white dark:bg-slate-950 rounded-lg p-1 border border-slate-200 dark:border-slate-800">
                         {['AND', 'OR'].map((logic) => (
                         <button 
                             key={logic}
@@ -360,24 +422,6 @@ export const ResourceFilters = React.memo(({
                         >{logic}</button>
                         ))}
                     </div>
-
-                    {/* Save View Controls */}
-                    {isSavingView ? (
-                        <div className="flex items-center gap-2 bg-blue-50 dark:bg-blue-900/20 p-1 rounded-lg border border-blue-200 dark:border-blue-800 animate-in fade-in slide-in-from-right-2">
-                            <input 
-                              autoFocus
-                              className="bg-transparent text-xs text-blue-900 dark:text-blue-100 placeholder-blue-400 px-2 py-1 outline-none w-32"
-                              placeholder="View Name..."
-                              value={viewName}
-                              onChange={e => setViewName(e.target.value)}
-                              onKeyDown={e => { if(e.key === 'Enter' && viewName) { onSaveView(viewName); setIsSavingView(false); setViewName(''); } }}
-                            />
-                            <button onClick={() => { if(viewName) { onSaveView(viewName); setIsSavingView(false); setViewName(''); }}} className="p-1 hover:bg-blue-100 dark:hover:bg-blue-800 rounded text-blue-600 dark:text-blue-300"><Check className="w-3 h-3"/></button>
-                            <button onClick={() => setIsSavingView(false)} className="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-red-500"><X className="w-3 h-3"/></button>
-                        </div>
-                    ) : (
-                        <Button variant="ghost" size="xs" onClick={() => setIsSavingView(true)} leftIcon={<Save className="w-3 h-3"/>}>Save as View</Button>
-                    )}
                  </div>
               </div>
               
@@ -400,95 +444,103 @@ export const ResourceFilters = React.memo(({
 });
 
 // --- Bulk Action Bar ---
-interface BulkActionBarProps {
+export interface BulkActionBarProps {
   count: number;
   onOpenStudio: () => void;
   onClear: () => void;
 }
 
-export const BulkActionBar = ({ count, onOpenStudio, onClear }: BulkActionBarProps) => {
-  if (count === 0) return null;
-
+export const BulkActionBar: React.FC<BulkActionBarProps> = ({ count, onOpenStudio, onClear }) => {
   return (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom-4 duration-300">
-       <div className="bg-slate-900 text-white rounded-full shadow-2xl px-6 py-3 flex items-center gap-6 border border-slate-700/50 backdrop-blur-md">
-          <div className="flex items-center gap-3 pr-4 border-r border-slate-700">
-             <div className="bg-blue-600 rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold">
-                {count}
+    <AnimatePresence>
+      {count > 0 && (
+        <motion.div 
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -20 }}
+          className="absolute top-[88px] left-0 right-0 z-30 bg-indigo-600 text-white px-6 py-3 flex items-center justify-between shadow-lg backdrop-blur-md bg-indigo-600/95"
+        >
+          <div className="flex items-center gap-4">
+             <div className="flex items-center gap-2 font-bold text-sm">
+                <span className="bg-white/20 px-2 py-0.5 rounded text-white tabular-nums">{count}</span>
+                <span>Selected</span>
              </div>
-             <span className="text-sm font-medium">Selected</span>
-          </div>
-          <div className="flex items-center gap-2">
-             <Button variant="ghost" size="sm" onClick={onOpenStudio} className="text-slate-200 hover:text-white hover:bg-slate-800 rounded-full px-4 h-8" leftIcon={<Tag className="w-4 h-4"/>}>
-                Labeling Studio
+             <div className="h-4 w-px bg-indigo-400"></div>
+             <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={onOpenStudio} 
+                leftIcon={<Wand2 className="w-4 h-4" />}
+                className="text-white hover:bg-indigo-500 hover:text-white border border-white/20 hover:border-white/40"
+             >
+                AI Labeling Studio
              </Button>
-             <button onClick={onClear} className="p-1.5 hover:bg-slate-800 rounded-full text-slate-400 hover:text-white transition-colors">
-                <X className="w-4 h-4" />
+          </div>
+          <button onClick={onClear} className="text-white/60 hover:text-white p-1 rounded-full hover:bg-white/10 transition-colors">
+             <X className="w-5 h-5" />
+          </button>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+};
+
+// --- Pagination ---
+export interface PaginationControlProps {
+  currentPage: number;
+  totalPages: number;
+  itemsPerPage: number;
+  totalItems: number;
+  startIndex: number;
+  onPageChange: (page: number) => void;
+  onItemsPerPageChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+}
+
+export const PaginationControl: React.FC<PaginationControlProps> = ({ 
+  currentPage, totalPages, itemsPerPage, totalItems, startIndex, 
+  onPageChange, onItemsPerPageChange 
+}) => {
+  return (
+    <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 flex flex-col sm:flex-row items-center justify-between gap-4">
+       <div className="text-xs text-slate-500 dark:text-slate-400 order-2 sm:order-1">
+          Showing <span className="font-bold tabular-nums text-slate-700 dark:text-slate-200">{Math.min(startIndex + 1, totalItems)}</span> to <span className="font-bold tabular-nums text-slate-700 dark:text-slate-200">{Math.min(startIndex + itemsPerPage, totalItems)}</span> of <span className="font-bold tabular-nums text-slate-700 dark:text-slate-200">{totalItems}</span> results
+       </div>
+       
+       <div className="flex items-center gap-4 order-1 sm:order-2">
+          <div className="flex items-center gap-2">
+             <span className="text-[10px] uppercase font-bold text-slate-400 hidden sm:inline">Rows per page</span>
+             <select 
+               value={itemsPerPage}
+               onChange={onItemsPerPageChange}
+               className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 rounded px-2 py-1 outline-none focus:border-indigo-500 cursor-pointer"
+             >
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+             </select>
+          </div>
+          
+          <div className="flex items-center gap-1 bg-white dark:bg-slate-800 rounded-lg p-1 border border-slate-200 dark:border-slate-700">
+             <button 
+                disabled={currentPage === 1}
+                onClick={() => onPageChange(currentPage - 1)}
+                className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+             >
+                <ChevronLeft className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+             </button>
+             <span className="text-xs font-mono px-2 text-slate-600 dark:text-slate-400 min-w-[3rem] text-center">
+                {currentPage} / {Math.max(1, totalPages)}
+             </span>
+             <button 
+                disabled={currentPage === totalPages || totalPages === 0}
+                onClick={() => onPageChange(currentPage + 1)}
+                className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+             >
+                <ChevronRight className="w-4 h-4 text-slate-600 dark:text-slate-300" />
              </button>
           </div>
        </div>
     </div>
   );
-};
-
-// --- Pagination ---
-interface PaginationControlProps {
-    currentPage: number;
-    totalPages: number;
-    itemsPerPage: number;
-    totalItems: number;
-    startIndex: number;
-    onPageChange: (page: number) => void;
-    onItemsPerPageChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
-}
-
-export const PaginationControl = ({ 
-    currentPage, totalPages, itemsPerPage, totalItems, startIndex,
-    onPageChange, onItemsPerPageChange 
-}: PaginationControlProps) => {
-    return (
-        <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30">
-            <div className="text-xs text-slate-500 dark:text-slate-400">
-               Showing <span className="font-bold text-slate-700 dark:text-slate-300">{Math.min(startIndex + 1, totalItems)}</span> to <span className="font-bold text-slate-700 dark:text-slate-300">{Math.min(startIndex + itemsPerPage, totalItems)}</span> of <span className="font-bold text-slate-700 dark:text-slate-300">{totalItems}</span> resources
-            </div>
-            <div className="flex items-center gap-4">
-               <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-500">Rows per page:</span>
-                  <Select 
-                    value={itemsPerPage} 
-                    onChange={onItemsPerPageChange}
-                    className="h-8 py-1 text-xs w-16 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
-                  >
-                     <option value={10}>10</option>
-                     <option value={20}>20</option>
-                     <option value={50}>50</option>
-                     <option value={100}>100</option>
-                  </Select>
-               </div>
-               <div className="flex items-center gap-1">
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    disabled={currentPage === 1} 
-                    onClick={() => onPageChange(currentPage - 1)}
-                    className="px-2 h-8"
-                  >
-                     <ChevronLeft className="w-4 h-4" />
-                  </Button>
-                  <div className="text-xs font-medium text-slate-600 dark:text-slate-400 px-2">
-                     Page {currentPage} of {totalPages || 1}
-                  </div>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    disabled={currentPage === totalPages || totalPages === 0} 
-                    onClick={() => onPageChange(currentPage + 1)}
-                    className="px-2 h-8"
-                  >
-                     <ChevronRight className="w-4 h-4" />
-                  </Button>
-               </div>
-            </div>
-        </div>
-    );
 };

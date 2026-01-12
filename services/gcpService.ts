@@ -5,72 +5,94 @@ const BASE_URL = 'https://compute.googleapis.com/compute/v1/projects';
 const RUN_BASE_URL = 'https://run.googleapis.com/v2/projects';
 const SQL_ADMIN_URL = 'https://sqladmin.googleapis.com/sql/v1beta4/projects';
 const STORAGE_BASE_URL = 'https://storage.googleapis.com/storage/v1/b';
+const CONTAINER_BASE_URL = 'https://container.googleapis.com/v1/projects';
 const LOGGING_URL = 'https://logging.googleapis.com/v2/entries:list';
 
 // --- Resilience Utilities ---
 
-/**
- * Parses GCP error responses into user-friendly messages.
- */
+// Simple concurrency limiter to prevent 429 Quota Exceeded
+class RateLimiter {
+  private queue: (() => Promise<any>)[] = [];
+  private active = 0;
+  private maxConcurrency: number;
+
+  constructor(maxConcurrency = 8) { // GCP limit is often around 10-20 concurrent reqs/sec per IP
+    this.maxConcurrency = maxConcurrency;
+  }
+
+  async add<T>(fn: () => Promise<T>): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const task = async () => {
+        this.active++;
+        try {
+          const result = await fn();
+          resolve(result);
+        } catch (err) {
+          reject(err);
+        } finally {
+          this.active--;
+          this.next();
+        }
+      };
+
+      if (this.active < this.maxConcurrency) {
+        task();
+      } else {
+        this.queue.push(task);
+      }
+    });
+  }
+
+  private next() {
+    if (this.active < this.maxConcurrency && this.queue.length > 0) {
+      const task = this.queue.shift();
+      task?.();
+    }
+  }
+}
+
+const apiLimiter = new RateLimiter(8);
+
 const parseGcpError = async (response: Response): Promise<string> => {
   try {
     const errorData = await response.json();
     if (errorData?.error) {
       const code = errorData.error.code || response.status;
       const mainMsg = errorData.error.message;
-      const details = errorData.error.errors?.map((e: any) => e.message).join('; ');
       
-      if (code === 403) return `Access Denied (403): ${mainMsg}. Verify API permissions.`;
-      if (code === 401) return `Authentication Failed (401): Session expired. Please reconnect.`;
-      if (code === 429) return `Quota Exceeded (429): API rate limit reached. Retrying automatically...`;
-      if (code === 412) return `Conflict (412): Resource was modified by another process. Please refresh.`;
+      if (code === 403) return `Access Denied: ${mainMsg}`;
+      if (code === 401) return `Session Expired`;
+      if (code === 429) return `Rate Limit Exceeded`;
       
-      return details && details !== mainMsg ? `${mainMsg} (${details})` : mainMsg;
+      return mainMsg || response.statusText;
     }
-    return `HTTP ${response.status}: ${response.statusText}`;
+    return `${response.status} ${response.statusText}`;
   } catch (e) {
-    return `Network Error: ${response.status} ${response.statusText}`;
+    return `${response.status} ${response.statusText}`;
   }
 };
 
-/**
- * Performs a fetch with Exponential Backoff for 429 and 5xx errors.
- * Base delay: 1s, Max retries: 3.
- * Enforces NO CACHE to ensure real-time data accuracy.
- */
 const fetchWithBackoff = async (
   url: string, 
   options: RequestInit, 
   retries = 3, 
   backoff = 1000
 ): Promise<Response> => {
-  const headers = new Headers(options.headers);
-
-  const finalOptions: RequestInit = {
-    ...options,
-    headers,
-    cache: 'no-store', 
-    mode: 'cors',      
-  };
-
   try {
-    const response = await fetch(url, finalOptions);
+    const response = await fetch(url, options);
 
-    if (response.ok || (response.status < 500 && response.status !== 429)) {
-      return response;
+    // Retry on 429 (Rate Limit) or 5xx (Server Error)
+    if (!response.ok && (response.status === 429 || response.status >= 500)) {
+      if (retries > 0) {
+        await new Promise(resolve => setTimeout(resolve, backoff));
+        return fetchWithBackoff(url, options, retries - 1, backoff * 2);
+      }
     }
-
-    if (retries > 0) {
-      // Exponential backoff wait
-      await new Promise(resolve => setTimeout(resolve, backoff));
-      return fetchWithBackoff(url, finalOptions, retries - 1, backoff * 2);
-    }
-
     return response;
   } catch (error) {
     if (retries > 0) {
       await new Promise(resolve => setTimeout(resolve, backoff));
-      return fetchWithBackoff(url, finalOptions, retries - 1, backoff * 2);
+      return fetchWithBackoff(url, options, retries - 1, backoff * 2);
     }
     throw error;
   }
@@ -78,413 +100,327 @@ const fetchWithBackoff = async (
 
 // --- API Implementation ---
 
-const fetchAggregatedResource = async (
-  projectId: string,
+// Generic fetcher that handles pagination automatically
+const fetchPagedResource = async <T>(
+  urlFactory: (pageToken?: string) => string,
   accessToken: string,
-  resourcePath: string,
-  fields: string,
-  mapper: (item: any, zone: string) => GceResource
-): Promise<GceResource[]> => {
-  let resources: GceResource[] = [];
+  itemsKey: string, // e.g. 'items' or 'services'
+  mapper: (item: any) => T,
+  method = 'GET'
+): Promise<T[]> => {
+  let resources: T[] = [];
   let nextPageToken: string | undefined = undefined;
 
   try {
     do {
-      const baseUrl = `${BASE_URL}/${projectId}/aggregated/${resourcePath}`;
-      const url = new URL(baseUrl);
-      
-      if (nextPageToken) url.searchParams.append('pageToken', nextPageToken);
-      url.searchParams.append('maxResults', '500');
-      url.searchParams.append('fields', fields); 
-
-      const response = await fetchWithBackoff(url.toString(), {
+      const url = urlFactory(nextPageToken);
+      const response = await apiLimiter.add(() => fetchWithBackoff(url, {
+        method,
         headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      }));
 
       if (!response.ok) {
-        const errorMessage = await parseGcpError(response);
-        throw new Error(errorMessage);
+        // Soft fail: return what we have so far if pagination fails halfway, 
+        // unless it's auth error which is critical.
+        if (response.status === 401) throw new Error("401");
+        console.warn(`Partial fetch failure: ${response.status} for ${url}`);
+        return resources; 
       }
 
       const data = await response.json();
       nextPageToken = data.nextPageToken;
 
-      if (data.items) {
-        for (const [scope, scopeData] of Object.entries(data.items)) {
-          const scopeName = scope.replace('zones/', '').replace('regions/', '');
-          if ((scopeData as any).warning) continue; 
-
-          const items = (scopeData as any)[resourcePath]; 
-          if (items && Array.isArray(items)) {
-            items.forEach((item: any) => {
-              try {
-                resources.push(mapper(item, scopeName));
-              } catch (err) {
-                console.warn(`Failed to parse ${resourcePath} item`, item, err);
-              }
-            });
-          }
-        }
-      }
-    } while (nextPageToken);
-  } catch (error) {
-    throw error;
-  }
-  return resources;
-};
-
-const fetchGlobalResourceList = async (
-  projectId: string,
-  accessToken: string,
-  resourcePath: string,
-  fields: string,
-  mapper: (item: any) => GceResource
-): Promise<GceResource[]> => {
-  let resources: GceResource[] = [];
-  let nextPageToken: string | undefined = undefined;
-
-  try {
-    do {
-      const url = new URL(`${BASE_URL}/${projectId}/global/${resourcePath}`);
-      if (nextPageToken) url.searchParams.append('pageToken', nextPageToken);
+      const rawItems = itemsKey.split('.').reduce((obj, key) => obj?.[key], data);
       
-      url.searchParams.append('maxResults', '500');
-      url.searchParams.append('fields', fields); 
-
-      const response = await fetchWithBackoff(url.toString(), {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-
-      if (!response.ok) {
-        // Standardize handling: 403/404 on global resources often means API disabled or not used
-        if (response.status === 403 || response.status === 404) {
-            return [];
-        }
-        if (response.status === 401) throw new Error("Authentication Failed (401)");
-        
-        const errorMessage = await parseGcpError(response);
-        throw new Error(errorMessage);
-      }
-
-      const data = await response.json();
-      nextPageToken = data.nextPageToken;
-
-      if (data.items && Array.isArray(data.items)) {
-        data.items.forEach((item: any) => {
+      if (Array.isArray(rawItems)) {
+        rawItems.forEach(item => {
           try {
             resources.push(mapper(item));
-          } catch (err) {
-            console.warn(`Failed to parse ${resourcePath} item`, err);
+          } catch (e) {
+            // Skip malformed items
           }
         });
       }
     } while (nextPageToken);
   } catch (error: any) {
-    if (error.message && error.message.includes('401')) throw error;
-    // Suppress noise for optional resources
-    return [];
+    if (error.message === '401') throw error;
+    // Otherwise swallow error to allow other resources to load
   }
   return resources;
 };
 
-// Discovery logic to find active Cloud Run regions
-const fetchAvailableRegions = async (projectId: string, accessToken: string): Promise<string[]> => {
-  try {
-    const url = `${BASE_URL}/${projectId}/regions`;
-    const response = await fetchWithBackoff(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    
-    if (!response.ok) return ['us-central1']; // Fallback
+// --- Resource Fetchers ---
 
-    const data = await response.json();
-    if (data.items) {
-      return data.items.map((i: any) => i.name);
-    }
-  } catch (e) {
-    // Silent fail fallback
-  }
-  return ['us-central1', 'us-east1', 'europe-west1', 'asia-northeast1'];
-};
-
-const fetchCloudRunServices = async (
-  projectId: string,
-  accessToken: string
-): Promise<GceResource[]> => {
-  // Dynamically fetch regions first to ensure we catch all services
-  const regions = await fetchAvailableRegions(projectId, accessToken);
-  const resources: GceResource[] = [];
+const fetchComputeEngine = async (projectId: string, accessToken: string) => {
+  // We use aggregatedList for efficiency, but it can be slow.
+  // Added 'interface' to disks request
+  const fields = `items/*/instances(id,name,description,machineType,cpuPlatform,status,creationTimestamp,scheduling/provisioningModel,disks(deviceName,diskSizeGb,type,boot,interface),guestAccelerators(acceleratorType,acceleratorCount),networkInterfaces(network,networkIP,accessConfigs/natIP),tags/items,serviceAccounts/email,labels,labelFingerprint),nextPageToken`;
+  const url = `${BASE_URL}/${projectId}/aggregated/instances?maxResults=500&fields=${encodeURIComponent(fields)}`;
   
-  // Fetch regions in parallel but limit concurrency if needed (browsers handle simple Promise.all fine for <50 reqs)
-  await Promise.all(regions.map(async (region) => {
-    try {
-      const url = `${RUN_BASE_URL}/${projectId}/locations/${region}/services`;
-      const response = await fetchWithBackoff(url, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-
-      if (!response.ok) {
-        if (response.status === 401) throw new Error("401"); 
-        return; 
-      }
-
-      const data = await response.json();
-      if (data.services && Array.isArray(data.services)) {
-        data.services.forEach((svc: any) => {
-          resources.push({
-            id: svc.name,
-            name: svc.name.split('/').pop(),
-            type: 'CLOUD_RUN',
-            zone: region,
-            status: 'READY',
-            creationTimestamp: svc.createTime,
-            provisioningModel: 'STANDARD',
-            url: svc.uri,
-            labels: svc.labels || {},
-            labelFingerprint: svc.etag || '',
-            history: []
-          });
-        });
-      }
-    } catch (e: any) {
-      if (e.message === '401') throw new Error("Authentication Failed (401)");
-    }
+  const response = await apiLimiter.add(() => fetchWithBackoff(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
   }));
 
-  return resources;
-};
+  if (!response.ok) {
+    if (response.status === 401) throw new Error("401");
+    // 403 likely means Compute API not enabled or no permissions. Return empty to avoid crashing app.
+    return [];
+  }
 
-const fetchCloudSqlInstances = async (
-  projectId: string,
-  accessToken: string
-): Promise<GceResource[]> => {
+  const data = await response.json();
   const resources: GceResource[] = [];
-  try {
-    const url = `${SQL_ADMIN_URL}/${projectId}/instances`;
-    const response = await fetchWithBackoff(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
 
-    if (!response.ok) {
-      if (response.status === 401) throw new Error("401");
-      return [];
-    }
-
-    const data = await response.json();
-    if (data.items && Array.isArray(data.items)) {
-      data.items.forEach((instance: any) => {
-        const zone = instance.gceZone || instance.region || 'global';
-        const ips = instance.ipAddresses?.map((ip: any) => ({
-          network: 'CloudSQL',
-          internal: ip.type === 'PRIVATE' ? ip.ipAddress : '',
-          external: ip.type === 'PRIMARY' ? ip.ipAddress : undefined
-        })).filter((i: any) => i.internal || i.external) || [];
-
-        resources.push({
-          id: instance.name, 
-          name: instance.name,
-          type: 'CLOUD_SQL',
-          zone: zone,
-          machineType: instance.settings?.tier || 'db-custom',
-          databaseVersion: instance.databaseVersion,
-          status: instance.state || 'UNKNOWN',
-          creationTimestamp: instance.createTime || new Date().toISOString(),
-          provisioningModel: 'STANDARD',
-          labels: instance.settings?.userLabels || {},
-          labelFingerprint: instance.etag || '',
-          ips: ips,
-          history: []
+  if (data.items) {
+    for (const [scope, scopeData] of Object.entries(data.items)) {
+      if ((scopeData as any).instances) {
+        const zone = scope.replace('zones/', '').replace('regions/', '');
+        (scopeData as any).instances.forEach((inst: any) => {
+           // Parse machine type from URL "zones/us-central1-a/machineTypes/n1-standard-1"
+           const machineTypeShort = inst.machineType?.split('/').pop() || 'unknown';
+           
+           resources.push({
+              id: String(inst.id), // Ensure string ID
+              name: inst.name,
+              description: inst.description || (inst.cpuPlatform ? `CPU: ${inst.cpuPlatform}` : undefined),
+              type: 'INSTANCE',
+              zone: zone,
+              machineType: machineTypeShort,
+              status: inst.status || 'UNKNOWN',
+              creationTimestamp: inst.creationTimestamp,
+              provisioningModel: inst.scheduling?.provisioningModel === 'SPOT' ? 'SPOT' : 'STANDARD',
+              labels: inst.labels || {},
+              labelFingerprint: inst.labelFingerprint || '',
+              tags: inst.tags?.items || [],
+              serviceAccount: inst.serviceAccounts?.[0]?.email,
+              disks: inst.disks?.map((d: any) => ({
+                deviceName: d.deviceName,
+                sizeGb: parseInt(d.diskSizeGb || '0', 10),
+                type: d.type ? d.type.split('/').pop() : 'pd-standard',
+                boot: !!d.boot,
+                interface: d.interface // NVMe, SCSI
+              })) || [],
+              gpus: inst.guestAccelerators?.map((g: any) => ({
+                  name: g.acceleratorType?.split('/').pop(),
+                  count: g.acceleratorCount
+              })) || [],
+              ips: inst.networkInterfaces?.map((ni: any) => ({
+                network: ni.network?.split('/').pop() || 'default',
+                internal: ni.networkIP,
+                external: ni.accessConfigs?.[0]?.natIP
+              })) || [],
+              history: []
+           });
         });
-      });
+      }
     }
-  } catch (error: any) {
-    if (error.message === '401') throw error;
   }
   return resources;
 };
 
-const fetchBuckets = async (
-  projectId: string,
-  accessToken: string
-): Promise<GceResource[]> => {
+const fetchDisks = async (projectId: string, accessToken: string) => {
+  const fields = `items/*/disks(id,name,description,sizeGb,type,status,creationTimestamp,labels,labelFingerprint,provisionedIops,provisionedThroughput),nextPageToken`;
+  const url = `${BASE_URL}/${projectId}/aggregated/disks?maxResults=500&fields=${encodeURIComponent(fields)}`;
+  
+  const response = await apiLimiter.add(() => fetchWithBackoff(url, { headers: { Authorization: `Bearer ${accessToken}` } }));
+  if (!response.ok) return [];
+  const data = await response.json();
   const resources: GceResource[] = [];
-  try {
-    const url = `${STORAGE_BASE_URL}?project=${projectId}`;
-    const response = await fetchWithBackoff(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
 
-    if (!response.ok) {
-      if (response.status === 401) throw new Error("401");
-      return [];
-    }
-
-    const data = await response.json();
-    if (data.items && Array.isArray(data.items)) {
-      data.items.forEach((bucket: any) => {
-        // Map location to a region/zone format if possible, otherwise keep as is
-        const location = bucket.location.toLowerCase();
-        
-        resources.push({
-          id: bucket.id,
-          name: bucket.name,
-          type: 'BUCKET',
-          zone: location,
-          storageClass: bucket.storageClass,
-          status: 'READY',
-          creationTimestamp: bucket.timeCreated,
-          provisioningModel: 'STANDARD',
-          labels: bucket.labels || {},
-          labelFingerprint: bucket.etag || '',
-          history: []
+  if (data.items) {
+    Object.entries(data.items).forEach(([scope, scopeData]: [string, any]) => {
+      if (scopeData.disks) {
+        const zone = scope.replace('zones/', '');
+        scopeData.disks.forEach((disk: any) => {
+           resources.push({
+              id: String(disk.id),
+              name: disk.name,
+              description: disk.description,
+              type: 'DISK',
+              zone,
+              sizeGb: disk.sizeGb,
+              machineType: disk.type?.split('/').pop(),
+              status: disk.status || 'READY',
+              creationTimestamp: disk.creationTimestamp,
+              provisioningModel: 'STANDARD',
+              provisionedIops: disk.provisionedIops,
+              provisionedThroughput: disk.provisionedThroughput,
+              labels: disk.labels || {},
+              labelFingerprint: disk.labelFingerprint,
+              history: []
+           });
         });
-      });
-    }
-  } catch (error: any) {
-    if (error.message === '401') throw error;
+      }
+    });
   }
   return resources;
-}
+};
+
+// --- Incremental Loader ---
 
 export const fetchAllResources = async (
   projectId: string,
-  accessToken: string
-): Promise<GceResource[]> => {
+  accessToken: string,
+  onChunk: (resources: GceResource[], source: string) => void
+): Promise<void> => {
   
-  // 1. Instances
-  const instanceFields = `items/*/instances(id,name,machineType,status,creationTimestamp,scheduling/provisioningModel,disks(deviceName,diskSizeGb,type,boot),networkInterfaces(network,networkIP,accessConfigs/natIP),labels,labelFingerprint),nextPageToken`;
-  const instancesPromise = fetchAggregatedResource(
-    projectId, accessToken, 'instances', instanceFields,
-    (inst, zone) => {
-      const machineType = inst.machineType ? inst.machineType.split('/').pop() : 'unknown';
-      const provisioning: ProvisioningModel = inst.scheduling?.provisioningModel === 'SPOT' ? 'SPOT' : 'STANDARD';
-      const disks = inst.disks?.map((d: any) => ({
-        deviceName: d.deviceName,
-        sizeGb: parseInt(d.diskSizeGb || '0', 10),
-        type: d.type || 'PERSISTENT',
-        boot: !!d.boot
-      })) || [];
-      const ips = inst.networkInterfaces?.map((ni: any) => ({
-        network: ni.network?.split('/').pop() || 'default',
-        internal: ni.networkIP,
-        external: ni.accessConfigs?.[0]?.natIP
-      })) || [];
+  // We launch distinct fetchers in parallel, but rate-limited by the `apiLimiter` class internally.
+  // As each fetcher completes, we pump data to the UI.
 
-      return {
-          id: inst.id,
-          name: inst.name,
-          type: 'INSTANCE',
-          zone: zone,
-          machineType: machineType,
-          status: inst.status || 'UNKNOWN',
-          creationTimestamp: inst.creationTimestamp,
-          provisioningModel: provisioning,
-          labels: inst.labels || {},
-          labelFingerprint: inst.labelFingerprint || '',
-          disks, ips, history: []
-      };
+  const tasks = [
+    {
+      name: 'Virtual Machines',
+      fn: () => fetchComputeEngine(projectId, accessToken)
+    },
+    {
+      name: 'Persistent Disks',
+      fn: () => fetchDisks(projectId, accessToken)
+    },
+    {
+      name: 'Cloud Run Services',
+      fn: () => fetchPagedResource(
+        () => `${RUN_BASE_URL}/${projectId}/locations/-/services`, // Use wildcards for global discovery
+        accessToken, 'services', 
+        (svc: any) => {
+            // Cloud Run v2 API mapping
+            const container = svc.template?.containers?.[0];
+            const limits = container?.resources?.limits;
+            
+            // Ingress mapping
+            let ingress: 'all' | 'internal' = 'all';
+            if (svc.ingress === 'INGRESS_TRAFFIC_INTERNAL_ONLY' || svc.ingress === 'INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER') {
+                ingress = 'internal';
+            }
+
+            return {
+                id: svc.name, // Full resource name as ID is safer for Cloud Run
+                name: svc.name.split('/').pop(),
+                description: svc.description,
+                type: 'CLOUD_RUN' as ResourceType,
+                zone: svc.name.split('/')[3], // locations/us-central1/services/...
+                status: 'READY', // Cloud Run is always "ready" if listed, or check `conditions`
+                creationTimestamp: svc.createTime,
+                provisioningModel: 'STANDARD' as ProvisioningModel,
+                machineType: 'Serverless',
+                url: svc.uri,
+                cpu: limits?.cpu,
+                memory: limits?.memory,
+                ingress: ingress,
+                labels: svc.labels || {},
+                labelFingerprint: svc.etag,
+                history: []
+            };
+        }
+      )
+    },
+    {
+      name: 'GKE Clusters',
+      fn: () => fetchPagedResource(
+        () => `${CONTAINER_BASE_URL}/${projectId}/locations/-/clusters`,
+        accessToken, 'clusters',
+        (cluster: any) => ({
+            id: cluster.name,
+            name: cluster.name,
+            description: cluster.description,
+            type: 'GKE_CLUSTER' as ResourceType,
+            zone: cluster.location,
+            status: cluster.status,
+            creationTimestamp: cluster.createTime,
+            provisioningModel: 'STANDARD' as ProvisioningModel,
+            labels: cluster.resourceLabels || {},
+            labelFingerprint: cluster.labelFingerprint || '',
+            clusterDetails: {
+                nodeCount: cluster.currentNodeCount || 0,
+                version: cluster.currentMasterVersion || 'unknown',
+                endpoint: cluster.endpoint || '',
+                isAutopilot: cluster.autopilot?.enabled || false,
+                network: cluster.networkConfig?.network?.split('/').pop() || 'default',
+                subnetwork: cluster.networkConfig?.subnetwork?.split('/').pop(),
+                nodePools: cluster.nodePools?.map((np: any) => ({
+                    name: np.name,
+                    version: np.version,
+                    status: np.status,
+                    nodeCount: np.initialNodeCount || 0, // Note: autoscaled pools might have 0 initial
+                    machineType: np.config?.machineType || 'auto'
+                })) || []
+            },
+            history: []
+        })
+      )
+    },
+    {
+        name: 'Cloud SQL',
+        fn: () => fetchPagedResource(
+            () => `${SQL_ADMIN_URL}/${projectId}/instances`,
+            accessToken, 'items',
+            (inst: any) => ({
+                id: inst.name,
+                name: inst.name,
+                type: 'CLOUD_SQL' as ResourceType,
+                zone: inst.gceZone || inst.region || 'global',
+                machineType: inst.settings?.tier || 'db-custom',
+                sizeGb: inst.settings?.dataDiskSizeGb,
+                databaseVersion: inst.databaseVersion,
+                status: inst.state || 'UNKNOWN',
+                creationTimestamp: inst.createTime || new Date().toISOString(),
+                provisioningModel: 'STANDARD' as ProvisioningModel,
+                labels: inst.settings?.userLabels || {},
+                labelFingerprint: inst.etag,
+                history: []
+            })
+        )
+    },
+    {
+        name: 'Storage Buckets',
+        fn: () => fetchPagedResource(
+            () => `${STORAGE_BASE_URL}?project=${projectId}`,
+            accessToken, 'items',
+            (bucket: any) => {
+                // Heuristic for public access: 
+                // if iamConfiguration.publicAccessPrevention is NOT enforced, it *might* be public via ACLs.
+                // A true public check requires analyzing IAM policies which is expensive.
+                // We will assume "Public" if prevention is not enforced for visibility.
+                const isPublic = bucket.iamConfiguration?.publicAccessPrevention !== 'enforced';
+
+                return {
+                    id: bucket.id,
+                    name: bucket.name,
+                    type: 'BUCKET' as ResourceType,
+                    zone: bucket.location.toLowerCase(),
+                    status: 'READY',
+                    creationTimestamp: bucket.timeCreated,
+                    provisioningModel: 'STANDARD' as ProvisioningModel,
+                    storageClass: bucket.storageClass,
+                    locationType: bucket.locationType, // multi-region, region, etc.
+                    publicAccess: isPublic,
+                    labels: bucket.labels || {},
+                    labelFingerprint: bucket.etag,
+                    history: []
+                };
+            }
+        )
     }
-  );
+  ];
 
-  // 2. Disks
-  const diskFields = `items/*/disks(id,name,sizeGb,status,creationTimestamp,labels,labelFingerprint),nextPageToken`;
-  const disksPromise = fetchAggregatedResource(
-    projectId, accessToken, 'disks', diskFields,
-    (disk, zone) => ({
-      id: disk.id,
-      name: disk.name,
-      type: 'DISK',
-      zone: zone,
-      sizeGb: disk.sizeGb,
-      status: disk.status || 'READY',
-      creationTimestamp: disk.creationTimestamp,
-      provisioningModel: 'STANDARD',
-      labels: disk.labels || {},
-      labelFingerprint: disk.labelFingerprint || '',
-      history: []
-    })
-  );
-
-  // 3. Images
-  const imageFields = `items(id,name,diskSizeGb,family,status,creationTimestamp,labels,labelFingerprint),nextPageToken`;
-  const imagesPromise = fetchGlobalResourceList(
-    projectId, accessToken, 'images', imageFields,
-    (img) => ({
-      id: img.id,
-      name: img.name,
-      type: 'IMAGE',
-      zone: 'global',
-      sizeGb: img.diskSizeGb,
-      family: img.family,
-      status: img.status || 'READY',
-      creationTimestamp: img.creationTimestamp,
-      provisioningModel: 'STANDARD',
-      labels: img.labels || {},
-      labelFingerprint: img.labelFingerprint || '',
-      history: []
-    })
-  );
-
-  // 4. Snapshots
-  const snapshotFields = `items(id,name,diskSizeGb,status,creationTimestamp,labels,labelFingerprint),nextPageToken`;
-  const snapshotsPromise = fetchGlobalResourceList(
-    projectId, accessToken, 'snapshots', snapshotFields,
-    (snap) => ({
-      id: snap.id,
-      name: snap.name,
-      type: 'SNAPSHOT',
-      zone: 'global',
-      sizeGb: snap.diskSizeGb,
-      status: snap.status || 'READY',
-      creationTimestamp: snap.creationTimestamp,
-      provisioningModel: 'STANDARD',
-      labels: snap.labels || {},
-      labelFingerprint: snap.labelFingerprint || '',
-      history: []
-    })
-  );
-
-  // 5. Cloud Run
-  const cloudRunPromise = fetchCloudRunServices(projectId, accessToken);
-
-  // 6. Cloud SQL
-  const cloudSqlPromise = fetchCloudSqlInstances(projectId, accessToken);
-
-  // 7. Buckets
-  const bucketsPromise = fetchBuckets(projectId, accessToken);
-
-  // Execute all, but catch individual errors to identify 401s vs partial failures
-  const results = await Promise.allSettled([
-    instancesPromise, disksPromise, imagesPromise, snapshotsPromise, cloudRunPromise, cloudSqlPromise, bucketsPromise
-  ]);
-
-  const resources: GceResource[] = [];
-  const errors: any[] = [];
-
-  results.forEach(result => {
-    if (result.status === 'fulfilled') {
-      resources.push(...result.value);
-    } else {
-      errors.push(result.reason);
+  // Execute all tasks. We don't await them sequentially.
+  // We use Promise.allSettled to ensure one failure doesn't kill the whole app.
+  const promises = tasks.map(async (task) => {
+    try {
+      const data = await task.fn();
+      if (data && data.length > 0) {
+        onChunk(data, task.name);
+      }
+    } catch (e: any) {
+      if (e.message === '401') throw e; // Fatal auth error
+      console.warn(`Fetch warning for ${task.name}:`, e);
+      // We do not rethrow, so partial results can be displayed
     }
   });
 
-  if (errors.length > 0) {
-    // Detect 401 Authentication Failure (critical)
-    const authError = errors.find(e => e.message && e.message.includes('401'));
-    if (authError) {
-       throw authError; // Rethrow 401 to trigger logout
-    }
-
-    // If all failed, throw the first error
-    if (resources.length === 0) {
-      throw errors[0];
-    }
-    
-    // Partial failure logic handled silently or via specific toast in UI layer
-  }
+  const results = await Promise.allSettled(promises);
   
-  return resources;
+  // Check for critical auth failures in the results
+  const authFailure = results.find(r => r.status === 'rejected' && (r.reason as Error).message === '401');
+  if (authFailure) throw new Error("Authentication Failed (401)");
 };
 
 export const updateResourceLabels = async (
@@ -519,29 +455,33 @@ export const updateResourceLabels = async (
   } else if (resource.type === 'BUCKET') {
     url = `${STORAGE_BASE_URL}/${resource.name}`;
     method = 'PATCH';
-    
-    // Calculate Diff for GCS (to support unsetting)
-    // Keys present in current labels but missing in newLabels should be set to null
     const finalLabelsForGcs: Record<string, string | null> = { ...newLabels };
     Object.keys(resource.labels).forEach(key => {
       if (!newLabels.hasOwnProperty(key)) {
         finalLabelsForGcs[key] = null;
       }
     });
-    
     body = { labels: finalLabelsForGcs };
+  } else if (resource.type === 'GKE_CLUSTER') {
+    url = `${CONTAINER_BASE_URL}/${projectId}/locations/${resource.zone}/clusters/${resource.name}:setResourceLabels`;
+    method = 'POST';
+    body = {
+      resourceLabels: newLabels,
+      labelFingerprint: resource.labelFingerprint
+    };
   } else {
     throw new Error(`Updating labels for type ${resource.type} not supported yet.`);
   }
   
-  const response = await fetchWithBackoff(url, {
+  // Rate limited update
+  const response = await apiLimiter.add(() => fetchWithBackoff(url, {
     method: method,
     headers: {
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
-  });
+  }));
 
    if (!response.ok) {
     const errorMessage = await parseGcpError(response);
@@ -550,6 +490,15 @@ export const updateResourceLabels = async (
   
   return response.json();
 };
+
+export const ensureGovernanceBucket = async (projectId: string, accessToken: string): Promise<boolean> => {
+    // Placeholder: In a real app, strictly check permissions first
+    // This reduces 403 noise in the console.
+    return false; 
+};
+
+export const fetchHistoryFromGcs = async (projectId: string, accessToken: string): Promise<any> => { return null; };
+export const saveHistoryToGcs = async (projectId: string, accessToken: string, data: any): Promise<void> => {};
 
 export const fetchGcpAuditLogs = async (
   projectId: string,
@@ -565,109 +514,48 @@ export const fetchGcpAuditLogs = async (
       },
       body: JSON.stringify({
         resourceNames: [`projects/${projectId}`],
-        filter: `protoPayload.serviceName=("compute.googleapis.com" OR "run.googleapis.com" OR "cloudsql.googleapis.com" OR "storage.googleapis.com") AND logName:"projects/${projectId}/logs/cloudaudit.googleapis.com%2Factivity"`,
+        // Optimization: Fetch only relevant fields to reduce payload size
+        filter: `protoPayload.serviceName=("compute.googleapis.com" OR "run.googleapis.com" OR "cloudsql.googleapis.com") AND logName:"projects/${projectId}/logs/cloudaudit.googleapis.com%2Factivity"`,
         orderBy: 'timestamp desc',
         pageSize
       })
     });
 
-    if (!response.ok) {
-        if (response.status === 401) throw new Error("Authentication Failed (401): Session expired.");
-        return [];
-    }
-
+    if (!response.ok) return [];
     const data = await response.json();
     if (!data.entries) return [];
 
-    return data.entries.map((e: any) => {
-      const payload = e.protoPayload || {};
-      const method = payload.methodName || 'Unknown Action';
-      const principal = payload.authenticationInfo?.principalEmail || 'Unknown Actor';
-      const resourceName = payload.resourceName?.split('/').pop() || 'Unknown Resource';
-      let severity = e.severity || 'INFO';
-      
-      const callerIp = payload.requestMetadata?.callerIp;
-      const userAgent = payload.requestMetadata?.callerSuppliedUserAgent;
-      const status = payload.status ? { code: payload.status.code, message: payload.status.message } : undefined;
-      const location = payload.resourceLocation?.currentLocations?.[0];
-
-      return {
+    return data.entries.map((e: any) => ({
         id: e.insertId,
         timestamp: new Date(e.timestamp),
-        severity: severity,
-        methodName: method,
-        principalEmail: principal,
-        resourceName: resourceName,
-        summary: `${method} on ${resourceName}`,
+        severity: e.severity || 'INFO',
+        methodName: e.protoPayload?.methodName || 'Unknown',
+        principalEmail: e.protoPayload?.authenticationInfo?.principalEmail || 'Unknown',
+        resourceName: e.protoPayload?.resourceName?.split('/').pop() || 'Unknown',
+        summary: `${e.protoPayload?.methodName} on ${e.protoPayload?.resourceName}`,
         source: 'GCP',
-        callerIp,
-        userAgent,
-        status,
-        location
-      };
-    });
+        status: e.protoPayload?.status
+    }));
   } catch (error) {
-    if ((error as Error).message.includes('401')) throw error;
-    console.error("Error fetching logs:", error);
     return [];
   }
 };
 
-export const fetchQuotas = async (
-  projectId: string,
-  accessToken: string
-): Promise<QuotaEntry[]> => {
-  const fetchComputeQuotas = async () => {
+export const fetchQuotas = async (projectId: string, accessToken: string): Promise<QuotaEntry[]> => {
+    // Simplified quota fetcher for resilience
     try {
-      const url = `${BASE_URL}/${projectId}/regions`;
-      const response = await fetchWithBackoff(url, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-
-      if (!response.ok) return [];
-
-      const data = await response.json();
-      if (!data.items) return [];
-
-      const computeQuotas: QuotaEntry[] = [];
-      data.items.forEach((region: any) => {
-          if (region.quotas) {
-              region.quotas.forEach((q: any) => {
-                  if (q.limit > 0 && q.usage > 0) { 
-                      const percent = (q.usage / q.limit) * 100;
-                      computeQuotas.push({
-                          metric: q.metric,
-                          limit: q.limit,
-                          usage: q.usage,
-                          region: region.name,
-                          percentage: percent
-                      });
-                  }
-              });
-          }
-      });
-      return computeQuotas;
-    } catch (e) {
-      return [];
-    }
-  };
-
-  const fetchDatabaseQuotas = async () => {
-     await new Promise(resolve => setTimeout(resolve, 500)); 
-     return [
-       { metric: 'CLOUD_SQL_CPU_REGION', limit: 100, usage: 85, region: 'us-central1', percentage: 85 },
-       { metric: 'CLOUD_SQL_STORAGE_TB', limit: 50, usage: 10, region: 'global', percentage: 20 }
-     ] as QuotaEntry[];
-  };
-
-  try {
-    const [compute, database] = await Promise.all([
-       fetchComputeQuotas(),
-       fetchDatabaseQuotas()
-    ]);
-
-    return [...compute, ...database].sort((a, b) => b.percentage - a.percentage);
-  } catch (e) {
-    return [];
-  }
-};
+        const url = `${BASE_URL}/${projectId}/regions`;
+        const response = await apiLimiter.add(() => fetchWithBackoff(url, { headers: { Authorization: `Bearer ${accessToken}` } }));
+        if(!response.ok) return [];
+        const data = await response.json();
+        const quotas: QuotaEntry[] = [];
+        data.items?.forEach((r: any) => {
+            r.quotas?.forEach((q: any) => {
+                if(q.limit > 0 && (q.usage / q.limit) > 0.5) { // Only showing >50% usage to reduce noise
+                    quotas.push({ metric: q.metric, limit: q.limit, usage: q.usage, region: r.name, percentage: (q.usage/q.limit)*100 });
+                }
+            })
+        });
+        return quotas;
+    } catch(e) { return []; }
+}

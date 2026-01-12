@@ -1,19 +1,20 @@
 
 import React, { useMemo, useState } from 'react';
 import { GceResource } from '../types';
-import { Button, Card, Badge } from './DesignSystem';
+import { Button, Card, Badge, GlassCard } from './DesignSystem';
 import { 
   Shield, AlertTriangle, ArrowRight, 
   Server, HardDrive, Zap, Globe, MapPin, 
   Image as ImageIcon, Cloud, Database, 
-  CheckCircle2, XCircle, LayoutGrid, Terminal,
+  CheckCircle2, AlertOctagon, Terminal,
   Bot, RefreshCw, DollarSign, Box, Camera,
-  TrendingUp, Activity, Layers, PieChart
+  TrendingUp, TrendingDown, Layers, PieChart, Ship,
+  Lock, Wallet, Cpu, Activity, MoreHorizontal
 } from 'lucide-react';
-import { HealthGauge, DonutChart, SparkLine } from './Visualizations';
+import { HealthGauge, DonutChart, SparkLine, BarChart, AnimatedCounter } from './Visualizations';
 import { useDashboardAnalytics } from '../hooks/useDashboardAnalytics';
 import { RegionIcon } from './RegionIcon';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, Variants } from 'framer-motion';
 import { generateDashboardBrief } from '../services/geminiService';
 import { MarkdownView } from './MarkdownView';
 
@@ -28,45 +29,40 @@ export const Dashboard: React.FC<DashboardProps> = ({ resources, stats, onNaviga
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [isGeneratingInsight, setIsGeneratingInsight] = useState(false);
 
-  // Derived metrics for scores
+  // --- Derived Metrics for UI ---
+  
   const wasteScore = useMemo(() => {
     const total = resources.length || 1;
     const waste = analysis.stoppedInstances.length;
-    // Heuristic: Penalty for stopped instances
     return Math.max(0, 100 - Math.round((waste / total) * 200)); 
   }, [resources.length, analysis.stoppedInstances.length]);
 
   const securityScore = useMemo(() => {
     const total = resources.length || 1;
     const exposed = analysis.publicIpCount;
-    // Heuristic: Penalty for public IPs
     return Math.max(0, 100 - Math.round((exposed / total) * 150));
   }, [resources.length, analysis.publicIpCount]);
 
-  // Pricing Estimations
   const potentialSavings = useMemo(() => {
     let wastedDiskGb = 0;
-    // Find disks attached to stopped VMs
     analysis.stoppedInstances.forEach(vm => {
-       if (vm.disks) {
-          vm.disks.forEach(d => wastedDiskGb += d.sizeGb);
-       }
+       if (vm.disks) vm.disks.forEach(d => wastedDiskGb += d.sizeGb);
     });
-    
-    // Rough monthly estimation
-    const monthlySavings = wastedDiskGb * 0.04; 
+    const storageWasteCost = wastedDiskGb * 0.08; 
+    const ipWasteCost = analysis.stoppedInstances.length * 7.30; 
     return {
-       monthly: monthlySavings,
-       wastedGb: wastedDiskGb
+       monthly: storageWasteCost + ipWasteCost,
+       wastedGb: wastedDiskGb,
     };
   }, [analysis.stoppedInstances]);
 
-  const greeting = useMemo(() => {
-    const hour = new Date().getHours();
-    if (hour < 12) return "Good morning";
-    if (hour < 18) return "Good afternoon";
-    return "Good evening";
-  }, []);
+  // --- Resource Categorization for Charts ---
+  const resourceDistribution = useMemo(() => [
+    { label: 'Compute', value: analysis.vmCount + analysis.gkeCount + analysis.cloudRunCount, color: '#3b82f6' }, // blue-500
+    { label: 'Storage', value: analysis.diskCount + analysis.bucketCount + analysis.snapshotCount, color: '#a855f7' }, // purple-500
+    { label: 'Database', value: analysis.sqlCount, color: '#06b6d4' }, // cyan-500
+    { label: 'Artifacts', value: analysis.imageCount, color: '#f59e0b' }, // amber-500
+  ].filter(x => x.value > 0), [analysis]);
 
   const handleGenerateInsights = async () => {
      setIsGeneratingInsight(true);
@@ -80,7 +76,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ resources, stats, onNaviga
            stoppedCount: analysis.stoppedInstances.length,
            stoppedDiskGb: potentialSavings.wastedGb,
            publicIpCount: analysis.publicIpCount,
-           unlabeledCount: stats.unlabeled
+           unlabeledCount: stats.unlabeled,
+           totalDiskGb: analysis.totalDiskGb,
+           totalResources: stats.total,
+           estimatedMonthlyWaste: potentialSavings.monthly
         });
         setAiInsight(brief);
      } catch (e) {
@@ -90,18 +89,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ resources, stats, onNaviga
      }
   };
 
-  // Animation variants
-  const containerVars = {
+  // --- Animation Variants ---
+  const containerVars: Variants = {
     hidden: { opacity: 0 },
-    show: {
-      opacity: 1,
-      transition: { staggerChildren: 0.05 }
-    }
+    show: { opacity: 1, transition: { staggerChildren: 0.08 } }
   };
 
-  const itemVars = {
-    hidden: { opacity: 0, y: 15 },
-    show: { opacity: 1, y: 0, transition: { type: "spring" as const, stiffness: 300, damping: 24 } }
+  const itemVars: Variants = {
+    hidden: { opacity: 0, y: 20 },
+    show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 260, damping: 20 } }
   };
 
   return (
@@ -109,325 +105,286 @@ export const Dashboard: React.FC<DashboardProps> = ({ resources, stats, onNaviga
       variants={containerVars}
       initial="hidden"
       animate="show"
-      className="space-y-8 pb-12"
+      className="space-y-6 pb-12"
     >
-      {/* 1. Header Section */}
-      <motion.div variants={itemVars} className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-2 border-b border-slate-200 dark:border-slate-800">
+      {/* 1. Command Header */}
+      <motion.div variants={itemVars} className="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-2">
         <div>
-          <h1 className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-            {greeting}, Admin
-          </h1>
-          <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 mt-2 text-sm">
-            <span className="flex items-center gap-1.5"><Globe className="w-3.5 h-3.5"/> Project Alpha</span>
-            <span className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-700"></span>
-            <span className="font-mono text-xs opacity-80">{stats.total} Active Resources</span>
+          <div className="flex items-center gap-2 mb-1">
+             <Badge variant="neutral" className="bg-white/50 dark:bg-slate-800/50 backdrop-blur-md border-slate-200 dark:border-slate-700">
+                <Globe className="w-3 h-3 mr-1" /> Global Fleet
+             </Badge>
+             <span className="text-xs text-slate-400">Updated just now</span>
           </div>
+          <h1 className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+            Cloud Overview
+          </h1>
         </div>
         <div className="flex gap-3">
-           <Button variant="secondary" size="sm" onClick={() => onNavigate('logs')} leftIcon={<Terminal className="w-4 h-4" />}>Audit Logs</Button>
-           <Button variant="primary" size="sm" onClick={() => onNavigate('inventory')} rightIcon={<ArrowRight className="w-4 h-4" />}>Manage Fleet</Button>
+           <Button variant="outline" size="sm" className="bg-white/50 dark:bg-slate-800/50" onClick={() => onNavigate('logs')} leftIcon={<Terminal className="w-4 h-4" />}>Audit Logs</Button>
+           <Button variant="primary" size="sm" onClick={() => onNavigate('inventory')} rightIcon={<ArrowRight className="w-4 h-4" />} className="shadow-lg shadow-indigo-500/20">Manage Resources</Button>
         </div>
       </motion.div>
       
-      {/* 2. Key Performance Indicators */}
-      <motion.div variants={itemVars} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-         
-         <KpiCard 
+      {/* 2. Primary KPI Grid */}
+      <motion.div variants={itemVars} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+         <MetricCard 
+            title="Total Resources"
+            value={stats.total}
+            icon={Layers}
+            trend="+12%"
+            trendUp={true}
+            color="indigo"
+            chartData={[10, 15, 12, 18, 20, 25, stats.total]}
+         />
+         <MetricCard 
+            title="Est. Monthly Waste"
+            value={`$${potentialSavings.monthly.toFixed(0)}`}
+            icon={Wallet}
+            trend="Needs Review"
+            trendUp={false}
+            color="rose"
+            chartData={[50, 45, 60, 55, 80, 70, potentialSavings.monthly]}
+            isCurrency
+         />
+         <MetricCard 
             title="Governance Score"
             value={`${analysis.complianceRate}%`}
-            icon={LayoutGrid}
-            trend={analysis.complianceRate >= 95 ? 'Excellent' : analysis.complianceRate > 80 ? 'Good' : 'Needs Work'}
-            color={analysis.complianceRate >= 90 ? 'emerald' : 'amber'}
-            subtext={`${stats.labeled}/${stats.total} labeled`}
-         />
-
-         <KpiCard 
-            title="Security Posture"
-            value={`${securityScore}/100`}
             icon={Shield}
-            trend={analysis.publicIpCount === 0 ? 'Secure' : `${analysis.publicIpCount} Exposed IPs`}
-            color={securityScore > 90 ? 'blue' : 'red'}
-            subtext="Internet Exposure Risk"
+            trend={analysis.complianceRate >= 90 ? "Stable" : "Improving"}
+            trendUp={true}
+            color={analysis.complianceRate >= 90 ? "emerald" : "amber"}
+            chartData={[80, 82, 85, 84, 88, 89, analysis.complianceRate]}
          />
-
-         <KpiCard 
-            title="Active Savings"
-            value={analysis.spotCount > 0 ? `${analysis.spotCount} Spot VMs` : 'No Spot VMs'}
-            icon={DollarSign}
-            trend="Cost Optimization"
-            color="purple"
-            subtext={`${Math.round((analysis.spotCount / (analysis.vmCount || 1)) * 100)}% of fleet is Spot`}
-         />
-
-         <KpiCard 
-            title="Orphaned Storage"
-            value={`${potentialSavings.wastedGb} GB`}
-            icon={HardDrive}
-            trend={potentialSavings.monthly > 0 ? `~$${potentialSavings.monthly.toFixed(2)}/mo waste` : 'Optimized'}
-            color={potentialSavings.wastedGb > 0 ? 'orange' : 'emerald'}
-            subtext="Attached to stopped VMs"
+         <MetricCard 
+            title="Active Alerts"
+            value={analysis.stoppedInstances.length + analysis.publicIpCount}
+            icon={AlertOctagon}
+            trend={analysis.publicIpCount > 0 ? "Security Risk" : "Low Risk"}
+            trendUp={false}
+            color={analysis.publicIpCount > 0 ? "orange" : "blue"}
+            chartData={[2, 5, 3, 8, 4, 6, analysis.stoppedInstances.length + analysis.publicIpCount]}
          />
       </motion.div>
 
-      {/* 3. AI Executive Brief */}
-      <motion.div variants={itemVars}>
-         <div className="bg-gradient-to-r from-violet-600 to-indigo-700 rounded-2xl p-1 shadow-lg shadow-violet-500/20">
-            <div className="bg-white dark:bg-slate-900/95 backdrop-blur-xl rounded-xl p-6 sm:p-8">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6 mb-6">
-                    <div className="flex items-center gap-4">
-                        <div className="bg-gradient-to-br from-violet-500 to-fuchsia-500 p-3 rounded-2xl shadow-inner text-white">
-                            <Bot className="w-6 h-6" />
+      {/* 3. Main Dashboard Layout */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+         
+         {/* LEFT COLUMN (2/3): Fleet Composition & AI */}
+         <div className="xl:col-span-2 space-y-6">
+            
+            {/* Fleet Composition Panel */}
+            <motion.div variants={itemVars} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm relative overflow-hidden">
+                <div className="absolute top-0 right-0 p-6 opacity-50">
+                   <Activity className="w-6 h-6 text-slate-200 dark:text-slate-800" />
+                </div>
+                
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-6 flex items-center gap-2">
+                   <Server className="w-5 h-5 text-indigo-500" /> Fleet Composition
+                </h3>
+
+                <div className="flex flex-col md:flex-row gap-8 items-center">
+                   {/* Chart */}
+                   <div className="shrink-0 relative group">
+                      <div className="absolute inset-0 bg-indigo-500/5 rounded-full blur-2xl group-hover:bg-indigo-500/10 transition-all duration-700"></div>
+                      <DonutChart data={resourceDistribution} />
+                   </div>
+
+                   {/* Legend & Details */}
+                   <div className="flex-1 w-full grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-4">
+                         <DetailRow label="Compute Engine" count={analysis.vmCount} total={stats.total} color="bg-blue-500" icon={Cpu} />
+                         <DetailRow label="Kubernetes" count={analysis.gkeCount} total={stats.total} color="bg-sky-500" icon={Ship} />
+                         <DetailRow label="Cloud Run" count={analysis.cloudRunCount} total={stats.total} color="bg-indigo-500" icon={Cloud} />
+                      </div>
+                      <div className="space-y-4">
+                         <DetailRow label="Storage" count={analysis.diskCount + analysis.bucketCount} total={stats.total} color="bg-purple-500" icon={HardDrive} />
+                         <DetailRow label="Database" count={analysis.sqlCount} total={stats.total} color="bg-cyan-500" icon={Database} />
+                         <DetailRow label="Artifacts" count={analysis.imageCount + analysis.snapshotCount} total={stats.total} color="bg-amber-500" icon={Box} />
+                      </div>
+                   </div>
+                </div>
+            </motion.div>
+
+            {/* AI Insights Panel */}
+            <motion.div variants={itemVars} className="bg-gradient-to-br from-white via-indigo-50/50 to-white dark:from-slate-900 dark:via-slate-900 dark:to-indigo-950/30 rounded-2xl p-1 shadow-lg border border-indigo-100 dark:border-slate-800 text-slate-900 dark:text-white relative group overflow-hidden">
+               <div className="absolute inset-0 bg-noise opacity-20 pointer-events-none mix-blend-overlay"></div>
+               {/* Decorative glows */}
+               <div className="absolute -top-20 -left-20 w-64 h-64 bg-indigo-500/10 dark:bg-indigo-500/20 rounded-full blur-3xl pointer-events-none"></div>
+               <div className="absolute -bottom-20 -right-20 w-64 h-64 bg-violet-500/10 dark:bg-violet-500/20 rounded-full blur-3xl pointer-events-none"></div>
+
+               <div className="bg-white/60 dark:bg-slate-900/90 backdrop-blur-xl rounded-xl p-6 h-full relative z-10">
+                  <div className="flex justify-between items-start mb-6">
+                     <div className="flex items-center gap-3">
+                        <div className="p-2 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-lg shadow-lg">
+                           <Bot className="w-5 h-5 text-white" />
                         </div>
                         <div>
-                            <h2 className="text-xl font-bold text-slate-900 dark:text-white">AI Executive Insights</h2>
-                            <p className="text-sm text-slate-500 dark:text-slate-400">Strategic analysis of your cloud footprint.</p>
+                           <h3 className="font-bold text-slate-900 dark:text-white text-lg">AI Consultant</h3>
+                           <p className="text-xs text-slate-500 dark:text-slate-400">Strategic analysis engine</p>
                         </div>
-                    </div>
-                    {!aiInsight && (
+                     </div>
+                     {!aiInsight && (
                         <Button 
-                            variant="primary" 
-                            size="md"
-                            onClick={handleGenerateInsights}
-                            isLoading={isGeneratingInsight}
-                            leftIcon={<RefreshCw className="w-4 h-4"/>}
-                            className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-slate-200 border-none shadow-xl"
+                           variant="primary" 
+                           size="sm"
+                           onClick={handleGenerateInsights}
+                           isLoading={isGeneratingInsight}
+                           leftIcon={<RefreshCw className="w-3.5 h-3.5"/>}
+                           className="bg-white dark:bg-white/10 text-indigo-600 dark:text-white shadow-sm border border-indigo-100 dark:border-transparent hover:bg-indigo-50 dark:hover:bg-white/20 backdrop-blur-md"
                         >
-                            Generate Brief
+                           Analyze
                         </Button>
-                    )}
-                </div>
-
-                <AnimatePresence mode="wait">
-                    {aiInsight ? (
-                        <motion.div 
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            className="prose prose-sm dark:prose-invert max-w-none bg-slate-50 dark:bg-white/5 p-6 rounded-xl border border-slate-100 dark:border-white/5"
-                        >
-                            <MarkdownView content={aiInsight} />
-                            <div className="mt-4 flex justify-end">
-                                <button onClick={() => setAiInsight(null)} className="text-xs text-indigo-500 hover:underline">Clear</button>
-                            </div>
-                        </motion.div>
-                    ) : (
-                        <div className="flex flex-col items-center justify-center py-10 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl bg-slate-50/50 dark:bg-slate-900/50">
-                            <Zap className="w-8 h-8 text-slate-300 dark:text-slate-600 mb-3" />
-                            <p className="text-sm text-slate-500 max-w-md">
-                                Gemini is ready to analyze your {stats.total} resources to identify cost savings, security gaps, and governance improvements.
-                            </p>
-                        </div>
-                    )}
-                </AnimatePresence>
-            </div>
-         </div>
-      </motion.div>
-
-      {/* 4. Infrastructure Overview Grid */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-         
-         {/* Left: Compute & Services */}
-         <motion.div variants={itemVars} className="space-y-6">
-            <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Server className="w-5 h-5 text-blue-500" /> Compute & Services
-            </h3>
-            <div className="grid grid-cols-2 gap-4">
-                <ResourceStatCard 
-                    label="Virtual Machines" 
-                    value={analysis.vmCount} 
-                    icon={Server} 
-                    color="blue"
-                    metrics={[
-                        { label: 'On-Demand', value: analysis.onDemandCount },
-                        { label: 'Spot', value: analysis.spotCount }
-                    ]}
-                />
-                <ResourceStatCard 
-                    label="Cloud Run" 
-                    value={analysis.cloudRunCount} 
-                    icon={Cloud} 
-                    color="indigo"
-                    metrics={[
-                        { label: 'Services', value: analysis.cloudRunCount }
-                    ]}
-                />
-                <ResourceStatCard 
-                    label="Cloud SQL" 
-                    value={analysis.sqlCount} 
-                    icon={Database} 
-                    color="cyan"
-                    metrics={[
-                        { label: 'Instances', value: analysis.sqlCount }
-                    ]}
-                />
-                {/* Global Region Map */}
-                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm flex flex-col">
-                    <div className="flex justify-between items-center mb-4">
-                        <span className="font-bold text-slate-700 dark:text-slate-200 text-sm">Active Regions</span>
-                        <Globe className="w-4 h-4 text-slate-400" />
-                    </div>
-                    <div className="space-y-3 flex-1 overflow-auto custom-scrollbar max-h-[120px]">
-                        {analysis.topZones.length === 0 && <span className="text-xs text-slate-400 italic">No resources</span>}
-                        {analysis.topZones.map(([zone, count]) => (
-                            <div key={zone} className="flex justify-between items-center text-xs">
-                                <span className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
-                                    <RegionIcon zone={zone} /> {zone}
-                                </span>
-                                <span className="font-mono font-bold bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-700 dark:text-slate-300">{count}</span>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </div>
-         </motion.div>
-
-         {/* Right: Storage & Artifacts */}
-         <motion.div variants={itemVars} className="space-y-6">
-            <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <HardDrive className="w-5 h-5 text-purple-500" /> Storage & Artifacts
-            </h3>
-            <div className="grid grid-cols-2 gap-4">
-                <ResourceStatCard 
-                    label="Persistent Disks" 
-                    value={analysis.diskCount} 
-                    icon={HardDrive} 
-                    color="purple"
-                    metrics={[
-                        { label: 'Total Capacity', value: `${analysis.totalDiskGb} GB` }
-                    ]}
-                />
-                <ResourceStatCard 
-                    label="Object Storage" 
-                    value={analysis.bucketCount} 
-                    icon={Box} 
-                    color="yellow"
-                    metrics={[
-                        { label: 'Buckets', value: analysis.bucketCount }
-                    ]}
-                />
-                <ResourceStatCard 
-                    label="Disk Snapshots" 
-                    value={analysis.snapshotCount} 
-                    icon={Camera} 
-                    color="pink"
-                    metrics={[
-                        { label: 'Backup Size', value: `${analysis.totalSnapshotGb} GB` }
-                    ]}
-                />
-                <ResourceStatCard 
-                    label="Machine Images" 
-                    value={analysis.imageCount} 
-                    icon={ImageIcon} 
-                    color="orange"
-                    metrics={[
-                        { label: 'Image Size', value: `${analysis.totalImageGb} GB` }
-                    ]}
-                />
-            </div>
-         </motion.div>
-      </div>
-
-      {/* 5. Bottom Detail Sections */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-         
-         {/* Label Distribution */}
-         <motion.div variants={itemVars} className="lg:col-span-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm">
-            <div className="flex items-center gap-3 mb-6">
-               <div className="p-2 bg-slate-100 dark:bg-slate-800 rounded-lg text-slate-500">
-                  <Layers className="w-5 h-5" />
-               </div>
-               <div>
-                  <h3 className="font-bold text-slate-900 dark:text-white text-sm uppercase tracking-wide">Tagging Coverage</h3>
-                  <p className="text-xs text-slate-500">Top used label keys across fleet.</p>
-               </div>
-            </div>
-            
-            <div className="space-y-4">
-               {analysis.labelDistribution.length === 0 && (
-                  <div className="text-center py-8 text-slate-400 text-sm">No labels found on any resources.</div>
-               )}
-               {analysis.labelDistribution.map((item, i) => (
-                  <div key={item.label}>
-                     <div className="flex justify-between text-xs mb-1.5 font-medium">
-                        <span className="text-slate-600 dark:text-slate-300">{item.label}</span>
-                        <span className="text-slate-400">{item.value}</span>
-                     </div>
-                     <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                        <motion.div 
-                           initial={{ width: 0 }}
-                           whileInView={{ width: `${(item.value / analysis.maxLabelCount) * 100}%` }}
-                           transition={{ duration: 1, delay: i * 0.1 }}
-                           className="h-full bg-indigo-500 rounded-full"
-                        />
-                     </div>
-                  </div>
-               ))}
-            </div>
-         </motion.div>
-
-         {/* Actionable Alerts */}
-         <motion.div variants={itemVars} className="lg:col-span-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm overflow-hidden relative">
-            <div className="flex items-center justify-between mb-6 relative z-10">
-               <div className="flex items-center gap-3">
-                  <div className="p-2 bg-amber-50 dark:bg-amber-900/20 rounded-lg text-amber-500">
-                     <AlertTriangle className="w-5 h-5" />
-                  </div>
-                  <h3 className="font-bold text-slate-900 dark:text-white text-sm uppercase tracking-wide">Governance Alerts</h3>
-               </div>
-               {analysis.stoppedInstances.length > 0 && (
-                  <Badge variant="error" className="animate-pulse">{analysis.stoppedInstances.length} Issues</Badge>
-               )}
-            </div>
-
-            <div className="relative z-10">
-               {analysis.stoppedInstances.length === 0 && analysis.publicIpCount === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-8 text-slate-400">
-                     <CheckCircle2 className="w-12 h-12 text-emerald-500 mb-3 opacity-20" />
-                     <p>No critical issues detected. System healthy.</p>
-                  </div>
-               ) : (
-                  <div className="space-y-3 max-h-[200px] overflow-y-auto custom-scrollbar pr-2">
-                     {analysis.stoppedInstances.slice(0, 5).map(vm => (
-                        <div key={vm.id} className="flex items-center justify-between p-3 rounded-lg bg-red-50 dark:bg-red-950/20 border border-red-100 dark:border-red-900/30 group">
-                           <div className="flex items-center gap-3">
-                              <div className="w-1.5 h-1.5 rounded-full bg-red-500"></div>
-                              <div>
-                                 <div className="text-xs font-bold text-slate-700 dark:text-slate-200">{vm.name}</div>
-                                 <div className="text-[10px] text-slate-500">Stopped Instance • Costing Storage</div>
-                              </div>
-                           </div>
-                           <Button 
-                              size="xs" 
-                              variant="ghost" 
-                              className="text-red-600 hover:bg-red-100 dark:hover:bg-red-900/40 h-7"
-                              onClick={() => onNavigate('inventory')}
-                           >
-                              Inspect
-                           </Button>
-                        </div>
-                     ))}
-                     {analysis.publicIpCount > 0 && (
-                        <div className="flex items-center justify-between p-3 rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/30">
-                           <div className="flex items-center gap-3">
-                              <div className="w-1.5 h-1.5 rounded-full bg-amber-500"></div>
-                              <div>
-                                 <div className="text-xs font-bold text-slate-700 dark:text-slate-200">Public Internet Exposure</div>
-                                 <div className="text-[10px] text-slate-500">{analysis.publicIpCount} resources have external IPs</div>
-                              </div>
-                           </div>
-                           <Button 
-                              size="xs" 
-                              variant="ghost" 
-                              className="text-amber-600 hover:bg-amber-100 dark:hover:bg-amber-900/40 h-7"
-                              onClick={() => onNavigate('inventory')}
-                           >
-                              Review
-                           </Button>
-                        </div>
                      )}
                   </div>
-               )}
-            </div>
-         </motion.div>
+
+                  <AnimatePresence mode="wait">
+                     {aiInsight ? (
+                        <motion.div 
+                           initial={{ opacity: 0, y: 10 }}
+                           animate={{ opacity: 1, y: 0 }}
+                           className="prose prose-slate dark:prose-invert prose-sm max-w-none bg-slate-50 dark:bg-slate-950/50 p-6 rounded-xl border border-slate-200 dark:border-white/10"
+                        >
+                           <div className="flex justify-between items-center mb-4 border-b border-slate-200 dark:border-white/10 pb-4">
+                              <span className="text-xs font-mono text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
+                                 <CheckCircle2 className="w-3 h-3" /> Analysis Complete
+                              </span>
+                              <button onClick={() => setAiInsight(null)} className="text-xs text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors">Clear</button>
+                           </div>
+                           <MarkdownView content={aiInsight} />
+                           <div className="mt-6 flex justify-end">
+                              <Button variant="secondary" size="sm" onClick={() => onNavigate('inventory')} className="bg-white text-slate-900 hover:bg-slate-200 border-none shadow-sm">
+                                 Take Action
+                              </Button>
+                           </div>
+                        </motion.div>
+                     ) : (
+                        <div className="py-8 flex flex-col items-center justify-center text-center border-2 border-dashed border-slate-200 dark:border-white/10 rounded-xl bg-slate-50/50 dark:bg-white/5">
+                           {isGeneratingInsight ? (
+                              <div className="space-y-4">
+                                 <div className="flex gap-1 justify-center">
+                                    <motion.div animate={{ height: [10, 20, 10] }} transition={{ repeat: Infinity, duration: 1 }} className="w-1 bg-indigo-500 rounded-full" />
+                                    <motion.div animate={{ height: [15, 25, 15] }} transition={{ repeat: Infinity, duration: 1, delay: 0.1 }} className="w-1 bg-violet-500 rounded-full" />
+                                    <motion.div animate={{ height: [10, 20, 10] }} transition={{ repeat: Infinity, duration: 1, delay: 0.2 }} className="w-1 bg-fuchsia-500 rounded-full" />
+                                 </div>
+                                 <p className="text-sm text-slate-500 dark:text-slate-300 font-mono">Analyzing {stats.total} data points...</p>
+                              </div>
+                           ) : (
+                              <>
+                                 <Zap className="w-8 h-8 text-slate-400 dark:text-slate-600 mb-3" />
+                                 <p className="text-sm text-slate-500 dark:text-slate-400 max-w-xs">
+                                    Generate a comprehensive report on cost optimization, security risks, and governance gaps.
+                                 </p>
+                              </>
+                           )}
+                        </div>
+                     )}
+                  </AnimatePresence>
+               </div>
+            </motion.div>
+         </div>
+
+         {/* RIGHT COLUMN (1/3): Geo & Risks */}
+         <div className="space-y-6">
+            
+            {/* Geographic Distribution */}
+            <motion.div variants={itemVars} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm flex flex-col h-[380px]">
+                <div className="flex justify-between items-center mb-6">
+                   <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                      <Globe className="w-4 h-4" /> Global Presence
+                   </h3>
+                   <Badge variant="neutral">{analysis.topZones.length} Regions</Badge>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-4">
+                   {analysis.topZones.length === 0 && (
+                      <div className="flex flex-col items-center justify-center h-full text-slate-400 text-xs italic">
+                         <MapPin className="w-8 h-8 mb-2 opacity-20" />
+                         No regional data
+                      </div>
+                   )}
+                   {analysis.topZones.map(([zone, count]) => (
+                      <div key={zone} className="group">
+                         <div className="flex justify-between items-center mb-1.5">
+                            <div className="flex items-center gap-2">
+                               <RegionIcon zone={zone} className="w-4 h-3 rounded-[2px] shadow-sm" />
+                               <span className="text-xs font-bold text-slate-700 dark:text-slate-300 group-hover:text-indigo-500 transition-colors">{zone}</span>
+                            </div>
+                            <span className="text-xs font-mono text-slate-500 tabular-nums">{count}</span>
+                         </div>
+                         <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                            <motion.div 
+                               initial={{ width: 0 }}
+                               whileInView={{ width: `${(count / analysis.maxZone) * 100}%` }}
+                               transition={{ duration: 1, ease: "easeOut" }}
+                               className="h-full bg-slate-400 dark:bg-slate-600 group-hover:bg-indigo-500 transition-colors"
+                            />
+                         </div>
+                      </div>
+                   ))}
+                </div>
+            </motion.div>
+
+            {/* Operational Risks Feed */}
+            <motion.div variants={itemVars} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm relative overflow-hidden h-[400px] flex flex-col">
+               <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-amber-400 to-red-500"></div>
+               
+               <div className="flex justify-between items-center mb-6 pl-4">
+                  <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                     <AlertTriangle className="w-4 h-4 text-amber-500" /> Operational Risks
+                  </h3>
+                  {analysis.stoppedInstances.length + analysis.publicIpCount > 0 && (
+                     <span className="flex h-2.5 w-2.5 relative">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+                     </span>
+                  )}
+               </div>
+
+               <div className="flex-1 overflow-y-auto custom-scrollbar pl-4 pr-2 space-y-3">
+                  {analysis.stoppedInstances.length === 0 && analysis.publicIpCount === 0 ? (
+                     <div className="flex flex-col items-center justify-center h-full text-center">
+                        <div className="w-12 h-12 bg-emerald-50 dark:bg-emerald-900/20 rounded-full flex items-center justify-center mb-3">
+                           <CheckCircle2 className="w-6 h-6 text-emerald-500" />
+                        </div>
+                        <p className="text-sm font-bold text-slate-700 dark:text-slate-200">System Healthy</p>
+                        <p className="text-xs text-slate-500">No major anomalies detected.</p>
+                     </div>
+                  ) : (
+                     <>
+                        {analysis.stoppedInstances.map(vm => (
+                           <div key={vm.id} className="p-3 bg-red-50 dark:bg-red-950/10 border border-red-100 dark:border-red-900/20 rounded-lg flex items-start gap-3 group hover:border-red-300 dark:hover:border-red-900/50 transition-colors cursor-pointer" onClick={() => onNavigate('inventory')}>
+                              <div className="mt-0.5"><DollarSign className="w-4 h-4 text-red-500" /></div>
+                              <div className="flex-1">
+                                 <div className="flex justify-between">
+                                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 group-hover:underline">{vm.name}</span>
+                                    <span className="text-[10px] bg-white dark:bg-slate-900 px-1.5 py-0.5 rounded text-slate-500 border border-slate-200 dark:border-slate-800">Stopped</span>
+                                 </div>
+                                 <p className="text-[10px] text-slate-500 mt-1">
+                                    Idle resources incurring storage costs.
+                                 </p>
+                              </div>
+                           </div>
+                        ))}
+                        {analysis.publicIpCount > 0 && (
+                           <div className="p-3 bg-amber-50 dark:bg-amber-950/10 border border-amber-100 dark:border-amber-900/20 rounded-lg flex items-start gap-3 group hover:border-amber-300 dark:hover:border-amber-900/50 transition-colors cursor-pointer" onClick={() => onNavigate('inventory')}>
+                              <div className="mt-0.5"><Lock className="w-4 h-4 text-amber-500" /></div>
+                              <div className="flex-1">
+                                 <div className="flex justify-between">
+                                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Public Exposure</span>
+                                    <span className="text-[10px] bg-white dark:bg-slate-900 px-1.5 py-0.5 rounded text-slate-500 border border-slate-200 dark:border-slate-800 tabular-nums">{analysis.publicIpCount} IPs</span>
+                                 </div>
+                                 <p className="text-[10px] text-slate-500 mt-1">
+                                    Resources accessible from internet.
+                                 </p>
+                              </div>
+                           </div>
+                        )}
+                     </>
+                  )}
+               </div>
+            </motion.div>
+         </div>
       </div>
     </motion.div>
   );
@@ -435,65 +392,71 @@ export const Dashboard: React.FC<DashboardProps> = ({ resources, stats, onNaviga
 
 // --- Subcomponents ---
 
-const KpiCard = ({ title, value, icon: Icon, trend, color, subtext }: any) => {
-   const colors: any = {
-      emerald: 'text-emerald-500 bg-emerald-50 dark:bg-emerald-900/20',
-      blue: 'text-blue-500 bg-blue-50 dark:bg-blue-900/20',
-      purple: 'text-purple-500 bg-purple-50 dark:bg-purple-900/20',
-      orange: 'text-orange-500 bg-orange-50 dark:bg-orange-900/20',
-      amber: 'text-amber-500 bg-amber-50 dark:bg-amber-900/20',
-      red: 'text-red-500 bg-red-50 dark:bg-red-900/20',
+const MetricCard = ({ title, value, icon: Icon, trend, trendUp, color, chartData, isCurrency }: any) => {
+   const colorStyles: any = {
+      indigo: 'text-indigo-600 bg-indigo-50 dark:text-indigo-400 dark:bg-indigo-900/20',
+      emerald: 'text-emerald-600 bg-emerald-50 dark:text-emerald-400 dark:bg-emerald-900/20',
+      amber: 'text-amber-600 bg-amber-50 dark:text-amber-400 dark:bg-amber-900/20',
+      rose: 'text-rose-600 bg-rose-50 dark:text-rose-400 dark:bg-rose-900/20',
+      blue: 'text-blue-600 bg-blue-50 dark:text-blue-400 dark:bg-blue-900/20',
+      orange: 'text-orange-600 bg-orange-50 dark:text-orange-400 dark:bg-orange-900/20',
    };
 
    return (
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
-         <div className="flex justify-between items-start mb-4">
-            <div className={`p-2.5 rounded-xl ${colors[color]}`}>
+      <GlassCard className="p-5 relative overflow-hidden group hover:ring-2 hover:ring-indigo-500/20 transition-all duration-300">
+         <div className="flex justify-between items-start z-10 relative">
+            <div>
+               <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">{title}</p>
+               <h3 className="text-2xl font-extrabold text-slate-900 dark:text-white mt-1 tracking-tight">
+                  <AnimatedCounter value={value} />
+               </h3>
+            </div>
+            <div className={`p-2.5 rounded-xl ${colorStyles[color]} transition-transform group-hover:scale-110`}>
                <Icon className="w-5 h-5" />
             </div>
-            <span className={`text-xs font-bold px-2 py-1 rounded-full ${colors[color]}`}>
+         </div>
+         
+         <div className="mt-4 flex items-end justify-between z-10 relative">
+            <div className={`flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full ${trendUp ? 'text-emerald-600 bg-emerald-100 dark:bg-emerald-900/30' : 'text-slate-500 bg-slate-100 dark:bg-slate-800'}`}>
+               {trendUp ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
                {trend}
-            </span>
-         </div>
-         <div>
-            <div className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">{value}</div>
-            <div className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide mt-1">{title}</div>
-            <div className="text-[10px] text-slate-400 mt-2 border-t border-slate-100 dark:border-slate-800 pt-2">{subtext}</div>
-         </div>
-      </div>
-   );
-};
-
-const ResourceStatCard = ({ label, value, icon: Icon, color, metrics }: any) => {
-   const colorStyles: any = {
-      blue: 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400',
-      purple: 'bg-purple-50 text-purple-600 dark:bg-purple-900/20 dark:text-purple-400',
-      orange: 'bg-orange-50 text-orange-600 dark:bg-orange-900/20 dark:text-orange-400',
-      indigo: 'bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-400',
-      pink: 'bg-pink-50 text-pink-600 dark:bg-pink-900/20 dark:text-pink-400',
-      cyan: 'bg-cyan-50 text-cyan-600 dark:bg-cyan-900/20 dark:text-cyan-400',
-      yellow: 'bg-yellow-50 text-yellow-600 dark:bg-yellow-900/20 dark:text-yellow-400',
-   };
-
-   return (
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow-sm hover:border-slate-300 dark:hover:border-slate-700 transition-colors">
-         <div className="flex justify-between items-start mb-3">
-            <div className="flex items-center gap-3">
-                <div className={`p-2 rounded-lg ${colorStyles[color]}`}>
-                   <Icon className="w-4 h-4" />
-                </div>
-                <span className="font-bold text-slate-700 dark:text-slate-200 text-sm">{label}</span>
             </div>
-            <span className="text-xl font-bold text-slate-900 dark:text-white">{value}</span>
+            {/* Mini Sparkline */}
+            <div className="w-20 h-8 opacity-50 group-hover:opacity-100 transition-opacity">
+               <SparkLine data={chartData} color={trendUp ? '#10b981' : '#64748b'} height={32} />
+            </div>
          </div>
-         <div className="space-y-1.5 pt-3 border-t border-slate-100 dark:border-slate-800">
-            {metrics.map((m: any, i: number) => (
-               <div key={i} className="flex justify-between text-[10px] text-slate-500 dark:text-slate-400">
-                  <span>{m.label}</span>
-                  <span className="font-mono font-medium text-slate-700 dark:text-slate-300">{m.value}</span>
-               </div>
-            ))}
-         </div>
-      </div>
+
+         {/* Decorative Background Blob */}
+         <div className={`absolute -right-6 -bottom-6 w-24 h-24 rounded-full opacity-0 group-hover:opacity-10 transition-opacity duration-500 blur-2xl ${colorStyles[color].split(' ')[1]}`}></div>
+      </GlassCard>
    );
 };
+
+const DetailRow = ({ label, count, total, color, icon: Icon }: any) => {
+   const percent = total > 0 ? (count / total) * 100 : 0;
+   return (
+      <div className="group">
+         <div className="flex justify-between items-center mb-1 text-xs">
+            <div className="flex items-center gap-2">
+               <div className={`p-1 rounded ${color.replace('bg-', 'bg-').replace('500', '100')} dark:bg-opacity-20`}>
+                  <Icon className={`w-3 h-3 ${color.replace('bg-', 'text-')}`} />
+               </div>
+               <span className="font-medium text-slate-700 dark:text-slate-300">{label}</span>
+            </div>
+            <div className="flex gap-2">
+               <span className="font-bold text-slate-900 dark:text-white tabular-nums"><AnimatedCounter value={count} /></span>
+               <span className="text-slate-400 tabular-nums w-8 text-right">{Math.round(percent)}%</span>
+            </div>
+         </div>
+         <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+            <motion.div 
+               initial={{ width: 0 }}
+               whileInView={{ width: `${percent}%` }}
+               transition={{ duration: 1, ease: "easeOut" }}
+               className={`h-full ${color} rounded-full`}
+            />
+         </div>
+      </div>
+   )
+}
