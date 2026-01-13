@@ -1,9 +1,24 @@
 
 steps:
   # -------------------------------------------------------------------------
+  # 0. Prepare Environment
+  #    - Renames text files to standard configuration filenames.
+  #    - Ensures .dockerignore is active for efficient context loading.
+  # -------------------------------------------------------------------------
+  - name: 'ubuntu'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        mv Dockerfile.txt Dockerfile || true
+        mv dockerignore.txt .dockerignore || true
+        # nginx.txt is referenced directly in Dockerfile, so we keep it as is.
+
+  # -------------------------------------------------------------------------
   # 1. Build the Container Image
   #    - Passes the Gemini API Key as a build argument (VITE_API_KEY).
   #    - Tags the image for Artifact Registry.
+  #    - Uses $BUILD_ID instead of $SHORT_SHA for manual build compatibility.
   # -------------------------------------------------------------------------
   - name: 'gcr.io/cloud-builders/docker'
     entrypoint: 'bash'
@@ -13,11 +28,12 @@ steps:
         docker build \
           --build-arg API_KEY=$_GEMINI_API_KEY \
           -t $_REGION-docker.pkg.dev/$PROJECT_ID/app-repo/yalla-label:latest \
-          -t $_REGION-docker.pkg.dev/$PROJECT_ID/app-repo/yalla-label:$SHORT_SHA \
+          -t $_REGION-docker.pkg.dev/$PROJECT_ID/app-repo/yalla-label:$BUILD_ID \
           .
 
   # -------------------------------------------------------------------------
   # 2. Push Image to Artifact Registry
+  #    - Pushes 'latest' so the deployment step can find it immediately.
   # -------------------------------------------------------------------------
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', '$_REGION-docker.pkg.dev/$PROJECT_ID/app-repo/yalla-label:latest']
@@ -53,3 +69,4 @@ substitutions:
 
 images:
   - '$_REGION-docker.pkg.dev/$PROJECT_ID/app-repo/yalla-label:latest'
+  - '$_REGION-docker.pkg.dev/$PROJECT_ID/app-repo/yalla-label:$BUILD_ID'
