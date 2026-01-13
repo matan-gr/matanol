@@ -1,0 +1,55 @@
+
+steps:
+  # -------------------------------------------------------------------------
+  # 1. Build the Container Image
+  #    - Passes the Gemini API Key as a build argument (VITE_API_KEY).
+  #    - Tags the image for Artifact Registry.
+  # -------------------------------------------------------------------------
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        docker build \
+          --build-arg API_KEY=$_GEMINI_API_KEY \
+          -t $_REGION-docker.pkg.dev/$PROJECT_ID/app-repo/yalla-label:latest \
+          -t $_REGION-docker.pkg.dev/$PROJECT_ID/app-repo/yalla-label:$SHORT_SHA \
+          .
+
+  # -------------------------------------------------------------------------
+  # 2. Push Image to Artifact Registry
+  # -------------------------------------------------------------------------
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '$_REGION-docker.pkg.dev/$PROJECT_ID/app-repo/yalla-label:latest']
+
+  # -------------------------------------------------------------------------
+  # 3. Deploy to Cloud Run
+  #    - Deploys the 'latest' tag.
+  #    - Sets region and allows unauthenticated access (public web app).
+  #    - Limits memory to 512Mi (Cost Optimization).
+  # -------------------------------------------------------------------------
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'yalla-label'
+      - '--image'
+      - '$_REGION-docker.pkg.dev/$PROJECT_ID/app-repo/yalla-label:latest'
+      - '--region'
+      - '$_REGION'
+      - '--allow-unauthenticated'
+      - '--memory'
+      - '512Mi'
+      - '--max-instances'
+      - '10'
+
+# -------------------------------------------------------------------------
+# Substitutions (Variables)
+# -------------------------------------------------------------------------
+substitutions:
+  _REGION: 'us-central1' # Default region, can be overridden via CLI
+  _GEMINI_API_KEY: ''    # Must be provided at build time
+
+images:
+  - '$_REGION-docker.pkg.dev/$PROJECT_ID/app-repo/yalla-label:latest'
