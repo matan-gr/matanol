@@ -2,8 +2,6 @@
 steps:
   # -------------------------------------------------------------------------
   # 0. Prepare Environment
-  #    - Renames text files to standard configuration filenames.
-  #    - Ensures .dockerignore is active for efficient context loading.
   # -------------------------------------------------------------------------
   - name: 'ubuntu'
     entrypoint: 'bash'
@@ -12,13 +10,24 @@ steps:
       - |
         mv Dockerfile.txt Dockerfile || true
         mv dockerignore.txt .dockerignore || true
-        # nginx.txt is referenced directly in Dockerfile, so we keep it as is.
 
   # -------------------------------------------------------------------------
-  # 1. Build the Container Image
-  #    - Passes the Gemini API Key as a build argument (VITE_API_KEY).
-  #    - Tags the image for Artifact Registry.
-  #    - Uses $BUILD_ID instead of $SHORT_SHA for manual build compatibility.
+  # 1. Ensure Artifact Registry Repo Exists
+  #    - Prevents "repository not found" errors during push.
+  # -------------------------------------------------------------------------
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        gcloud artifacts repositories create app-repo \
+          --repository-format=docker \
+          --location=$_REGION \
+          --description="App Repository" \
+          --project=$PROJECT_ID || echo "Repository likely exists, proceeding..."
+
+  # -------------------------------------------------------------------------
+  # 2. Build the Container Image
   # -------------------------------------------------------------------------
   - name: 'gcr.io/cloud-builders/docker'
     entrypoint: 'bash'
@@ -32,17 +41,13 @@ steps:
           .
 
   # -------------------------------------------------------------------------
-  # 2. Push Image to Artifact Registry
-  #    - Pushes 'latest' so the deployment step can find it immediately.
+  # 3. Push Image to Artifact Registry
   # -------------------------------------------------------------------------
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', '$_REGION-docker.pkg.dev/$PROJECT_ID/app-repo/yalla-label:latest']
 
   # -------------------------------------------------------------------------
-  # 3. Deploy to Cloud Run
-  #    - Deploys the 'latest' tag.
-  #    - Sets region and allows unauthenticated access (public web app).
-  #    - Limits memory to 512Mi (Cost Optimization).
+  # 4. Deploy to Cloud Run
   # -------------------------------------------------------------------------
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
@@ -64,8 +69,8 @@ steps:
 # Substitutions (Variables)
 # -------------------------------------------------------------------------
 substitutions:
-  _REGION: 'us-central1' # Default region, can be overridden via CLI
-  _GEMINI_API_KEY: ''    # Must be provided at build time
+  _REGION: 'us-central1'
+  _GEMINI_API_KEY: ''
 
 images:
   - '$_REGION-docker.pkg.dev/$PROJECT_ID/app-repo/yalla-label:latest'
