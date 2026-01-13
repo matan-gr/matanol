@@ -3,10 +3,10 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GcpCredentials } from '../types';
 import { APP_NAME, APP_VERSION } from '../constants';
-import { Button, Input } from './DesignSystem';
+import { Button, Input, Tooltip } from './DesignSystem';
 import { 
   Tags, ArrowRight, Key, Cloud, Lock, 
-  Activity, CheckCircle2, Zap
+  Activity, CheckCircle2, Zap, ShieldAlert, Info
 } from 'lucide-react';
 
 interface LoginScreenProps {
@@ -140,6 +140,15 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onConnect, isConnectin
                               autoComplete="new-password"
                               data-lpignore="true"
                            />
+                           
+                           <div className="bg-amber-900/20 border border-amber-900/50 p-3 rounded-lg flex gap-3 items-start">
+                              <ShieldAlert className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                              <div className="text-[10px] text-amber-200/80 leading-relaxed">
+                                 <strong>Security Tip:</strong> Do not use Owner/Editor tokens. Use a custom role with 
+                                 <code className="bg-black/30 px-1 py-0.5 mx-1 rounded text-amber-400 font-mono">compute.instances.setLabels</code> 
+                                 only.
+                              </div>
+                           </div>
                         </div>
 
                         <div className="pt-2">

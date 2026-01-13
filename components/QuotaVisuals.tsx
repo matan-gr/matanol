@@ -59,14 +59,24 @@ export const QuotaVisuals: React.FC<QuotaVisualsProps> = ({ quotas, isLoading })
 
   if (quotas.length === 0) {
       return (
-          <div className="flex flex-col items-center justify-center p-20 text-slate-500 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+          <div className="flex flex-col items-center justify-center p-20 text-slate-500 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm text-center">
               <div className="p-4 bg-slate-100 dark:bg-slate-800 rounded-full mb-4">
                 <Gauge className="w-10 h-10 opacity-50" />
               </div>
               <h3 className="text-xl font-bold text-slate-700 dark:text-slate-300">No Quota Data Available</h3>
-              <p className="text-sm mt-2 max-w-md text-center">
-                Ensure the Compute Engine API is enabled and you have permissions to view regions.
+              <p className="text-sm mt-3 max-w-md text-center leading-relaxed">
+                We couldn't retrieve any quota limits for this project. 
               </p>
+              <div className="mt-6 p-4 bg-amber-50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/30 rounded-xl text-left text-sm text-amber-800 dark:text-amber-200 max-w-md">
+                 <div className="flex items-center gap-2 font-bold mb-2">
+                    <ShieldAlert className="w-4 h-4" /> Troubleshooting
+                 </div>
+                 <ul className="list-disc list-inside space-y-1 text-xs opacity-90">
+                    <li>Ensure <strong>Compute Engine API</strong> is enabled.</li>
+                    <li>Verify your token has the <code>compute.regions.list</code> IAM permission.</li>
+                    <li>Check if the project is newly created and still provisioning.</li>
+                 </ul>
+              </div>
           </div>
       );
   }
@@ -169,7 +179,7 @@ export const QuotaVisuals: React.FC<QuotaVisualsProps> = ({ quotas, isLoading })
            {filteredQuotas.length === 0 && (
               <div className="col-span-full py-20 text-center text-slate-400">
                  <div className="flex justify-center mb-4"><HelpCircle className="w-12 h-12 opacity-20" /></div>
-                 <p>No quotas found for this category with active usage.</p>
+                 <p>No quotas found for this category.</p>
               </div>
            )}
 

@@ -606,20 +606,46 @@ export const fetchGcpAuditLogs = async (
 };
 
 export const fetchQuotas = async (projectId: string, accessToken: string): Promise<QuotaEntry[]> => {
-    // Simplified quota fetcher for resilience
+    // Key metrics we always want to show even if usage is 0
+    const ALWAYS_SHOW_METRICS = [
+        'CPUS', 'NVIDIA_A100_GPUS', 'NVIDIA_T4_GPUS', 
+        'SSD_TOTAL_GB', 'DISKS_TOTAL_GB', 
+        'IN_USE_ADDRESSES', 'GLOBAL_INTERNAL_ADDRESSES',
+        'INSTANCES'
+    ];
+
     try {
         const url = `${BASE_URL}/${projectId}/regions`;
         const response = await apiLimiter.add(() => fetchWithBackoff(url, { headers: { Authorization: `Bearer ${accessToken}` } }));
-        if(!response.ok) return [];
+        
+        if (!response.ok) {
+            console.error(`Quota fetch failed: ${response.status} ${response.statusText}`);
+            return [];
+        }
+
         const data = await response.json();
         const quotas: QuotaEntry[] = [];
-        data.items?.forEach((r: any) => {
-            r.quotas?.forEach((q: any) => {
-                if(q.limit > 0 && (q.usage / q.limit) > 0.5) { // Only showing >50% usage to reduce noise
-                    quotas.push({ metric: q.metric, limit: q.limit, usage: q.usage, region: r.name, percentage: (q.usage/q.limit)*100 });
-                }
-            })
-        });
+        
+        if (data.items) {
+            data.items.forEach((r: any) => {
+                r.quotas?.forEach((q: any) => {
+                    // Show if limit exists AND (usage > 0 OR it's a key metric)
+                    const isKeyMetric = ALWAYS_SHOW_METRICS.includes(q.metric);
+                    if(q.limit > 0 && (q.usage > 0 || isKeyMetric)) { 
+                        quotas.push({ 
+                            metric: q.metric, 
+                            limit: q.limit, 
+                            usage: q.usage, 
+                            region: r.name, 
+                            percentage: (q.usage/q.limit)*100 
+                        });
+                    }
+                })
+            });
+        }
         return quotas;
-    } catch(e) { return []; }
+    } catch(e) { 
+        console.error("Quota fetch error", e);
+        return []; 
+    }
 }
