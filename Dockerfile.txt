@@ -16,8 +16,9 @@ COPY package.json package-lock.json* ./
 # Update npm to the latest version to ensure compatibility and performance
 RUN npm install -g npm@latest
 
-# Install dependencies strictly (ci ensures exact versions from lockfile)
-RUN npm ci
+# Install dependencies
+# Using 'npm install' instead of 'npm ci' to generate lockfile if missing
+RUN npm install
 
 # SECURITY: Audit dependencies for critical vulnerabilities
 # This will fail the build if any high/critical vulnerabilities are found in the supply chain
