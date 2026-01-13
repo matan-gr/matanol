@@ -7,11 +7,12 @@ import {
   Bot, Lightbulb, Check, Play, Layers,
   Replace, LayoutTemplate, Sparkles, AlertCircle,
   FileCode, SaveAll, Undo, ChevronRight, Eye, AlertTriangle,
-  Scissors, Wand2, Loader2
+  Scissors, Wand2, Loader2, ArrowDown
 } from 'lucide-react';
 import { Button, Input, Select, Badge, Card, ToggleSwitch, Tooltip } from './DesignSystem';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import { analyzeNamingPatterns } from '../services/geminiService';
+import { validateKey, validateValue } from '../utils/validation';
 
 // --- Types ---
 
@@ -396,11 +397,23 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
                                     <div className="flex gap-2">
                                         <div className="flex-1">
                                             <label className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Key</label>
-                                            <Input placeholder="e.g. environment" value={op.config.key} onChange={e => updateConfig(op.id, 'key', e.target.value)} className="h-8 text-xs font-mono" />
+                                            <Input 
+                                                placeholder="e.g. environment" 
+                                                value={op.config.key} 
+                                                onChange={e => updateConfig(op.id, 'key', e.target.value)} 
+                                                className="h-8 text-xs font-mono" 
+                                                error={validateKey(op.config.key || '') || undefined}
+                                            />
                                         </div>
                                         <div className="flex-1">
                                             <label className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Value</label>
-                                            <Input placeholder="e.g. production" value={op.config.value} onChange={e => updateConfig(op.id, 'value', e.target.value)} className="h-8 text-xs font-mono" />
+                                            <Input 
+                                                placeholder="e.g. production" 
+                                                value={op.config.value} 
+                                                onChange={e => updateConfig(op.id, 'value', e.target.value)} 
+                                                className="h-8 text-xs font-mono" 
+                                                error={validateValue(op.config.value || '') || undefined}
+                                            />
                                         </div>
                                     </div>
                                     )}
@@ -462,41 +475,57 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
                                          </div>
 
                                          {sampleResource && op.config.delimiter && (
-                                           <div className="bg-slate-100 dark:bg-slate-950/50 p-3 rounded-lg border border-slate-200 dark:border-slate-800 overflow-x-auto">
-                                              <div className="text-[10px] uppercase font-bold text-slate-400 mb-2 flex items-center gap-1">
-                                                <Eye className="w-3 h-3" /> Token Preview: <span className="text-slate-600 dark:text-slate-300 normal-case ml-1 font-mono">{sampleResource.name}</span>
+                                           <div className="bg-slate-100 dark:bg-slate-950/50 p-4 rounded-xl border border-slate-200 dark:border-slate-800 overflow-x-auto relative mt-2">
+                                              <div className="text-[10px] uppercase font-bold text-slate-400 mb-3 flex items-center gap-1">
+                                                <Eye className="w-3 h-3" /> Pattern Preview: <span className="text-slate-600 dark:text-slate-300 normal-case ml-1 font-mono">{sampleResource.name}</span>
                                               </div>
-                                              <div className="flex items-start gap-3 pb-2">
-                                                 {sampleResource.name.split(op.config.delimiter).map((token, idx) => {
+                                              
+                                              <div className="flex items-start gap-0 relative">
+                                                 {sampleResource.name.split(op.config.delimiter).map((token, idx, arr) => {
                                                     const mapping = op.config.mappings?.find(m => m.index === idx);
                                                     const assignedKey = mapping?.targetKey || '';
+                                                    const isLast = idx === arr.length - 1;
                                                     
                                                     return (
-                                                      <div key={idx} className="flex flex-col gap-2 min-w-[80px]">
-                                                         <Tooltip content={`Value: ${token}`} placement="top">
-                                                            <div className={`
-                                                               px-2 py-1.5 rounded-md text-xs font-mono text-center border truncate transition-colors duration-200
-                                                               ${assignedKey 
-                                                                 ? 'bg-blue-100 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 shadow-sm' 
-                                                                 : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500'}
-                                                            `}>
-                                                               {token}
-                                                            </div>
-                                                         </Tooltip>
-                                                         <div className="relative group/line flex flex-col items-center">
-                                                            <div className={`w-px h-3 mb-1 transition-colors ${assignedKey ? 'bg-blue-300 dark:bg-blue-600' : 'bg-slate-200 dark:bg-slate-700'}`}></div>
-                                                            <Input 
-                                                               placeholder="Key..." 
-                                                               value={assignedKey}
-                                                               className={`h-6 text-[10px] text-center px-1 ${assignedKey ? 'border-blue-300 focus:border-blue-500 bg-blue-50 dark:bg-blue-900/10' : ''}`}
-                                                               onChange={(e) => {
-                                                                  const val = e.target.value;
-                                                                  const newMappings = op.config.mappings?.filter(m => m.index !== idx) || [];
-                                                                  if (val) newMappings.push({ index: idx, targetKey: val });
-                                                                  updateConfig(op.id, 'mappings', newMappings);
-                                                               }}
-                                                            />
-                                                         </div>
+                                                      <div key={idx} className="flex items-center">
+                                                          <div className="flex flex-col items-center gap-2">
+                                                              {/* Token Bubble */}
+                                                              <div className={`
+                                                                 px-3 py-1.5 rounded-full text-xs font-mono font-medium border shadow-sm transition-all relative z-10
+                                                                 ${assignedKey 
+                                                                   ? 'bg-blue-500 text-white border-blue-600 shadow-blue-500/20' 
+                                                                   : 'bg-white dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-700'}
+                                                              `}>
+                                                                 {token}
+                                                              </div>
+                                                              
+                                                              {/* Key Input */}
+                                                              <div className="relative group/line flex flex-col items-center">
+                                                                 <div className={`w-0.5 h-3 mb-1 transition-colors ${assignedKey ? 'bg-blue-400' : 'bg-slate-200 dark:bg-slate-700'}`}></div>
+                                                                 <Input 
+                                                                    placeholder={`Pos ${idx}`} 
+                                                                    value={assignedKey}
+                                                                    className={`
+                                                                        h-6 text-[10px] text-center px-1 w-20 shadow-sm transition-all
+                                                                        ${assignedKey 
+                                                                            ? 'border-blue-300 focus:border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-bold' 
+                                                                            : 'text-slate-400 border-slate-200 dark:border-slate-700'}
+                                                                    `}
+                                                                    onChange={(e) => {
+                                                                       const val = e.target.value;
+                                                                       const newMappings = op.config.mappings?.filter(m => m.index !== idx) || [];
+                                                                       if (val) newMappings.push({ index: idx, targetKey: val });
+                                                                       updateConfig(op.id, 'mappings', newMappings);
+                                                                    }}
+                                                                    error={assignedKey ? validateKey(assignedKey) || undefined : undefined}
+                                                                 />
+                                                              </div>
+                                                          </div>
+                                                          
+                                                          {/* Connector Line */}
+                                                          {!isLast && (
+                                                              <div className="w-6 h-0.5 bg-slate-300 dark:bg-slate-700 -mt-10 mx-1"></div>
+                                                          )}
                                                       </div>
                                                     );
                                                  })}

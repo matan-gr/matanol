@@ -1,7 +1,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { GceResource } from '../types';
-import { Button, Card, Badge, GlassCard } from './DesignSystem';
+import { Button, Card, Badge, GlassCard, Tooltip } from './DesignSystem';
 import { 
   Shield, AlertTriangle, ArrowRight, 
   Server, HardDrive, Zap, Globe, MapPin, 
@@ -9,7 +9,7 @@ import {
   CheckCircle2, AlertOctagon, Terminal,
   Bot, RefreshCw, DollarSign, Box,
   TrendingUp, TrendingDown, Layers, Ship,
-  Lock, Wallet, Cpu, Activity
+  Lock, Wallet, Cpu, Activity, Info
 } from 'lucide-react';
 import { DonutChart, SparkLine, AnimatedCounter } from './Visualizations';
 import { useDashboardAnalytics } from '../hooks/useDashboardAnalytics';
@@ -150,6 +150,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ resources, stats, onNaviga
             color="rose"
             chartData={[50, 45, 60, 55, 80, 70, potentialSavings.monthly]}
             isCurrency
+            info="Calculated based on standard on-demand pricing for resources in STOPPED state (Idle VMs + Attached Storage + Unused IPs)."
          />
          <MetricCard 
             title="Governance Score"
@@ -401,7 +402,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ resources, stats, onNaviga
 
 // --- Subcomponents ---
 
-const MetricCard = ({ title, value, icon: Icon, trend, trendUp, color, chartData, isCurrency }: any) => {
+const MetricCard = ({ title, value, icon: Icon, trend, trendUp, color, chartData, isCurrency, info }: any) => {
    const colorStyles: any = {
       indigo: 'text-indigo-600 bg-indigo-50 dark:text-indigo-400 dark:bg-indigo-900/20',
       emerald: 'text-emerald-600 bg-emerald-50 dark:text-emerald-400 dark:bg-emerald-900/20',
@@ -412,32 +413,45 @@ const MetricCard = ({ title, value, icon: Icon, trend, trendUp, color, chartData
    };
 
    return (
-      <GlassCard className="p-5 relative overflow-hidden group hover:ring-2 hover:ring-indigo-500/20 transition-all duration-300">
-         <div className="flex justify-between items-start z-10 relative">
-            <div>
-               <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">{title}</p>
-               <h3 className="text-2xl font-extrabold text-slate-900 dark:text-white mt-1 tracking-tight">
-                  <AnimatedCounter value={value} />
-               </h3>
-            </div>
-            <div className={`p-2.5 rounded-xl ${colorStyles[color]} transition-transform group-hover:scale-110`}>
-               <Icon className="w-5 h-5" />
-            </div>
-         </div>
-         
-         <div className="mt-4 flex items-end justify-between z-10 relative">
-            <div className={`flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full ${trendUp ? 'text-emerald-600 bg-emerald-100 dark:bg-emerald-900/30' : 'text-slate-500 bg-slate-100 dark:bg-slate-800'}`}>
-               {trendUp ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-               {trend}
-            </div>
-            {/* Mini Sparkline */}
-            <div className="w-20 h-8 opacity-50 group-hover:opacity-100 transition-opacity">
-               <SparkLine data={chartData} color={trendUp ? '#10b981' : '#64748b'} height={32} />
-            </div>
+      <GlassCard className="p-0 relative !overflow-visible group hover:ring-2 hover:ring-indigo-500/20 transition-all duration-300">
+         {/* Decoration Container - Clipped to radius */}
+         <div className="absolute inset-0 overflow-hidden rounded-xl pointer-events-none">
+             <div className={`absolute -right-6 -bottom-6 w-24 h-24 rounded-full opacity-0 group-hover:opacity-10 transition-opacity duration-500 blur-2xl ${colorStyles[color].split(' ')[1]}`}></div>
          </div>
 
-         {/* Decorative Background Blob */}
-         <div className={`absolute -right-6 -bottom-6 w-24 h-24 rounded-full opacity-0 group-hover:opacity-10 transition-opacity duration-500 blur-2xl ${colorStyles[color].split(' ')[1]}`}></div>
+         {/* Content - Visible Overflow for Tooltip */}
+         <div className="p-5 relative z-10">
+             <div className="flex justify-between items-start">
+                <div className="flex items-center gap-1.5">
+                   <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">{title}</p>
+                   {info && (
+                      <Tooltip content={info} placement="bottom">
+                         <Info className="w-3 h-3 text-slate-400 hover:text-indigo-500 cursor-help transition-colors" />
+                      </Tooltip>
+                   )}
+                </div>
+                <div className={`p-2.5 rounded-xl ${colorStyles[color]} transition-transform group-hover:scale-110`}>
+                   <Icon className="w-5 h-5" />
+                </div>
+             </div>
+             
+             <div className="mt-1 relative">
+                <h3 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+                   <AnimatedCounter value={value} />
+                </h3>
+             </div>
+             
+             <div className="mt-4 flex items-end justify-between relative">
+                <div className={`flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full ${trendUp ? 'text-emerald-600 bg-emerald-100 dark:bg-emerald-900/30' : 'text-slate-500 bg-slate-100 dark:bg-slate-800'}`}>
+                   {trendUp ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                   {trend}
+                </div>
+                {/* Mini Sparkline */}
+                <div className="w-20 h-8 opacity-50 group-hover:opacity-100 transition-opacity">
+                   <SparkLine data={chartData} color={trendUp ? '#10b981' : '#64748b'} height={32} />
+                </div>
+             </div>
+         </div>
       </GlassCard>
    );
 };

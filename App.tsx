@@ -10,7 +10,8 @@ import { LoginScreen } from './components/LoginScreen';
 import { CommandPalette } from './components/CommandPalette';
 import { PolicyManager } from './components/PolicyManager';
 import { ComplianceReportModal } from './components/ComplianceReportModal';
-import { GlobalContextMenu } from './components/GlobalContextMenu'; // Import
+import { GlobalContextMenu } from './components/GlobalContextMenu';
+import { SettingsPage } from './components/SettingsPage'; // Import SettingsPage
 import { useNotifications } from './hooks/useNotifications';
 import { useResourceManager } from './hooks/useResourceManager';
 import { useLogs } from './hooks/useLogs';
@@ -132,8 +133,7 @@ export const App = () => {
 
   useEffect(() => {
     if (credentials?.projectId) {
-       const views = Storage.get<SavedView[]>(credentials.projectId, 'saved_views', []);
-       setSavedViews(views);
+       Storage.get<SavedView[]>(credentials.projectId, 'saved_views', []).then(setSavedViews);
     }
   }, [credentials?.projectId]);
 
@@ -298,6 +298,7 @@ export const App = () => {
         savedViews={savedViews}
         onSelectView={handleLoadView}
         onDeleteView={handleDeleteView}
+        projectId={credentials?.projectId}
       >
         <AnimatePresence mode="wait">
           {activeTab === 'dashboard' && (
@@ -406,6 +407,13 @@ export const App = () => {
                         isLoading={isLoadingLogs} 
                     />
                 </div>
+            </PageTransition>
+          )}
+
+          {/* New Settings Tab */}
+          {activeTab === 'settings' && (
+            <PageTransition key="settings">
+                <SettingsPage projectId={credentials.projectId} />
             </PageTransition>
           )}
         </AnimatePresence>

@@ -21,6 +21,7 @@ interface LayoutProps {
   savedViews?: SavedView[];
   onSelectView?: (view: SavedView) => void;
   onDeleteView?: (id: string) => void;
+  projectId?: string;
 }
 
 const ToastItem: React.FC<{ n: Notification, onDismiss: (id: string) => void }> = ({ n, onDismiss }) => {
@@ -136,7 +137,8 @@ export const Layout: React.FC<LayoutProps> = ({
   toggleTheme,
   savedViews = [],
   onSelectView,
-  onDeleteView
+  onDeleteView,
+  projectId
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
 
@@ -301,9 +303,7 @@ export const Layout: React.FC<LayoutProps> = ({
                  {NAVIGATION_ITEMS.find(n => n.id === activeTab)?.label}
                </h2>
                <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  <span>Project Alpha</span>
-                  <ChevronRight className="w-3 h-3 text-gray-300 dark:text-gray-600" />
-                  <span className="text-gray-400">us-central1</span>
+                  <span>{projectId || 'Project Alpha'}</span>
                </div>
             </div>
           </div>
