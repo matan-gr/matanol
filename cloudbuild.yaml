@@ -12,19 +12,29 @@ steps:
         mv dockerignore.txt .dockerignore || true
 
   # -------------------------------------------------------------------------
-  # 1. Ensure Artifact Registry Repo Exists
-  #    - Prevents "repository not found" errors during push.
+  # 1. Setup Artifact Registry
+  #    - Enable API
+  #    - Create Repository if missing (Idempotent)
   # -------------------------------------------------------------------------
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        gcloud artifacts repositories create app-repo \
-          --repository-format=docker \
-          --location=$_REGION \
-          --description="App Repository" \
-          --project=$PROJECT_ID || echo "Repository likely exists, proceeding..."
+        echo "Enabling Artifact Registry API..."
+        gcloud services enable artifactregistry.googleapis.com
+        
+        echo "Checking for repository 'app-repo' in $_REGION..."
+        if ! gcloud artifacts repositories describe app-repo --location=$_REGION --project=$PROJECT_ID > /dev/null 2>&1; then
+          echo "Repository not found. Creating..."
+          gcloud artifacts repositories create app-repo \
+            --repository-format=docker \
+            --location=$_REGION \
+            --description="App Repository" \
+            --project=$PROJECT_ID
+        else
+          echo "Repository 'app-repo' already exists."
+        fi
 
   # -------------------------------------------------------------------------
   # 2. Build the Container Image
@@ -66,11 +76,14 @@ steps:
       - '10'
 
 # -------------------------------------------------------------------------
-# Substitutions (Variables)
+# Configuration
 # -------------------------------------------------------------------------
 substitutions:
   _REGION: 'us-central1'
   _GEMINI_API_KEY: ''
+
+options:
+  logging: CLOUD_LOGGING_ONLY
 
 images:
   - '$_REGION-docker.pkg.dev/$PROJECT_ID/app-repo/yalla-label:latest'
