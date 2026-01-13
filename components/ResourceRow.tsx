@@ -462,9 +462,22 @@ export const ResourceRow = React.memo(({
            <div className="space-y-1.5">
               {renderConfiguration()}
               {/* Contextual Detail based on type */}
-              <div className="text-[10px] text-slate-500 dark:text-slate-400 flex gap-2">
-                 {resource.type === 'INSTANCE' && resource.sizeGb && <span>Boot: {resource.sizeGb}GB</span>}
-                 {resource.ips?.some(i => i.external) && <span className="text-amber-600 dark:text-amber-500 font-bold">Public IP</span>}
+              <div className="flex flex-wrap gap-2 text-[10px] text-slate-500 dark:text-slate-400 items-center">
+                 {resource.type === 'INSTANCE' && (
+                    <>
+                        {resource.provisioningModel && (
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium border ${
+                                resource.provisioningModel === 'SPOT' 
+                                ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-400' 
+                                : 'border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400'
+                            }`}>
+                                {resource.provisioningModel}
+                            </span>
+                        )}
+                        {resource.sizeGb && <span>Boot: {resource.sizeGb}GB</span>}
+                    </>
+                 )}
+                 {resource.ips?.some(i => i.external) && <span className="text-amber-600 dark:text-amber-500 font-bold border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-1.5 py-0.5 rounded text-[9px]">Public IP</span>}
               </div>
            </div>
         </td>
@@ -711,7 +724,7 @@ export const ResourceRow = React.memo(({
                      <div>
                         <label className="text-[10px] text-slate-500 block">Created At</label>
                         <div className="text-xs font-medium text-slate-700 dark:text-slate-200 tabular-nums">
-                           {new Date(resource.creationTimestamp).toLocaleDateString()}
+                           {new Date(resource.creationTimestamp).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
                         </div>
                      </div>
                      <div>

@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { GcpCredentials, FilterConfig, SavedView, QuotaEntry } from './types';
 import { Layout } from './components/Layout';
 import { ResourceTable } from './components/ResourceTable';
@@ -39,6 +39,8 @@ const DEFAULT_FILTER_CONFIG: FilterConfig = {
   showUnlabeledOnly: false
 };
 
+const IDLE_TIMEOUT_MS = 15 * 60 * 1000; // 15 Minutes
+
 // Enterprise-grade transition with spring physics
 const PageTransition: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <MotionDiv
@@ -57,7 +59,15 @@ export const App = () => {
   const [credentials, setCredentials] = useState<GcpCredentials | null>(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [filterConfig, setFilterConfig] = useState<FilterConfig>(DEFAULT_FILTER_CONFIG);
-  const [isDark, setIsDark] = useState(true);
+  
+  // Initialize isDark based on the class set by theme-loader.js to prevent mismatch
+  const [isDark, setIsDark] = useState(() => {
+    if (typeof document !== 'undefined') {
+      return document.documentElement.classList.contains('dark');
+    }
+    return true;
+  });
+
   const [quotas, setQuotas] = useState<QuotaEntry[]>([]);
   const [isLoadingQuotas, setIsLoadingQuotas] = useState(false);
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
@@ -89,17 +99,36 @@ export const App = () => {
   
   const { logs, refreshGcpLogs, isLoadingLogs } = useLogs();
 
-  // Load Preferences
-  useEffect(() => {
-    const savedTheme = localStorage.getItem('theme');
-    if (savedTheme === 'light') {
-      setIsDark(false);
-      document.documentElement.classList.remove('dark');
-    } else {
-      setIsDark(true);
-      document.documentElement.classList.add('dark');
+  // --- Security: Idle Timeout ---
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const resetIdleTimer = useCallback(() => {
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    if (credentials) {
+      idleTimerRef.current = setTimeout(() => {
+        setCredentials(null);
+        setActiveTab('dashboard');
+        addNotification('Session timed out due to inactivity.', 'warning');
+      }, IDLE_TIMEOUT_MS);
     }
-  }, []);
+  }, [credentials, addNotification]);
+
+  useEffect(() => {
+    if (!credentials) return;
+
+    const events = ['mousedown', 'keydown', 'scroll', 'touchstart'];
+    const handleActivity = () => resetIdleTimer();
+
+    // Initial start
+    resetIdleTimer();
+
+    events.forEach(evt => window.addEventListener(evt, handleActivity));
+    return () => {
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      events.forEach(evt => window.removeEventListener(evt, handleActivity));
+    };
+  }, [credentials, resetIdleTimer]);
+  // -----------------------------
 
   useEffect(() => {
     if (credentials?.projectId) {
@@ -134,9 +163,13 @@ export const App = () => {
   const toggleTheme = () => {
     setIsDark(prev => {
       const next = !prev;
-      if (next) document.documentElement.classList.add('dark');
-      else document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', next ? 'dark' : 'light');
+      if (next) {
+        document.documentElement.classList.add('dark');
+        localStorage.setItem('theme', 'dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+        localStorage.setItem('theme', 'light');
+      }
       return next;
     });
   };

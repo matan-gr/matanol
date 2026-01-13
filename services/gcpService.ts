@@ -513,6 +513,43 @@ export const updateResourceLabels = async (
   return response.json();
 };
 
+export const fetchResource = async (projectId: string, accessToken: string, resource: GceResource): Promise<GceResource | null> => {
+  let url = '';
+  // Used for fetching latest state (e.g., fingerprint) for rollback
+  
+  if (resource.type === 'INSTANCE') {
+    url = `${BASE_URL}/${projectId}/zones/${resource.zone}/instances/${resource.name}`;
+  } else if (resource.type === 'DISK') {
+    url = `${BASE_URL}/${projectId}/zones/${resource.zone}/disks/${resource.name}`;
+  } else if (resource.type === 'BUCKET') {
+    url = `${STORAGE_BASE_URL}/${resource.name}`;
+  } else if (resource.type === 'CLOUD_RUN') {
+    url = `https://run.googleapis.com/v2/projects/${projectId}/locations/${resource.zone}/services/${resource.name}`;
+  } else if (resource.type === 'CLOUD_SQL') {
+    url = `${SQL_ADMIN_URL}/${projectId}/instances/${resource.name}`;
+  } else if (resource.type === 'GKE_CLUSTER') {
+    url = `${CONTAINER_BASE_URL}/${projectId}/locations/${resource.zone}/clusters/${resource.name}`;
+  } else {
+      return null;
+  }
+
+  try {
+      const response = await apiLimiter.add(() => fetchWithBackoff(url, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+      }));
+      if (!response.ok) return null;
+      const data = await response.json();
+      
+      // We return the original resource with updated critical fields
+      return {
+          ...resource,
+          labelFingerprint: data.labelFingerprint || data.etag || ''
+      };
+  } catch (e) {
+      return null;
+  }
+};
+
 export const ensureGovernanceBucket = async (projectId: string, accessToken: string): Promise<boolean> => {
     // Placeholder: In a real app, strictly check permissions first
     // This reduces 403 noise in the console.
@@ -556,7 +593,12 @@ export const fetchGcpAuditLogs = async (
         resourceName: e.protoPayload?.resourceName?.split('/').pop() || 'Unknown',
         summary: `${e.protoPayload?.methodName} on ${e.protoPayload?.resourceName}`,
         source: 'GCP',
-        status: e.protoPayload?.status
+        status: e.protoPayload?.status,
+        // Added rich metadata extraction
+        callerIp: e.protoPayload?.requestMetadata?.callerIp,
+        userAgent: e.protoPayload?.requestMetadata?.callerSuppliedUserAgent,
+        metadata: e.protoPayload?.request,
+        serviceName: e.protoPayload?.serviceName
     }));
   } catch (error) {
     return [];

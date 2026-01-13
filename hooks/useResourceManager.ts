@@ -1,7 +1,7 @@
 
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { GceResource, GcpCredentials, LabelHistoryEntry, TaxonomyRule, GovernancePolicy } from '../types';
-import { fetchAllResources, updateResourceLabels as updateResourceLabelsApi } from '../services/gcpService';
+import { fetchAllResources, updateResourceLabels as updateResourceLabelsApi, fetchResource } from '../services/gcpService';
 import { analyzeResourceBatch, generateComplianceReport } from '../services/geminiService';
 import { generateMockResources } from '../services/mockService';
 import { persistenceService } from '../services/persistenceService';
@@ -204,6 +204,9 @@ export const useResourceManager = (
     }
   }, [resources, addNotification]);
 
+  /**
+   * Atomic Bulk Update with Rollback Support
+   */
   const bulkUpdateLabels = useCallback(async (
     credentials: GcpCredentials,
     updates: Map<string, Record<string, string>>
@@ -211,56 +214,124 @@ export const useResourceManager = (
      const idsToUpdate = Array.from(updates.keys());
      const count = idsToUpdate.length;
      
-     // 1. Mark all as updating
+     // Snapshot original state for rollback capability
+     const originalStates = new Map<string, Record<string, string>>();
+     resources.forEach(r => {
+         if (updates.has(r.id)) {
+             originalStates.set(r.id, { ...r.labels });
+         }
+     });
+
+     // 1. Mark all as updating (Optimistic Visuals)
      setResources(prev => prev.map(r => updates.has(r.id) ? { ...r, isUpdating: true } : r));
      setBatchProgress({ processed: 0, total: count });
 
-     // 2. Process in chunks
-     const BATCH_SIZE = 10; 
-     let processed = 0;
-     let success = 0;
-     let failed = 0;
+     const successfulUpdates: string[] = [];
+     let errorOccurred = null;
 
-     // Helper to update a chunk
-     const processChunk = async (ids: string[]) => {
-        const promises = ids.map(async (id) => {
-            const res = resources.find(r => r.id === id);
-            const labels = updates.get(id);
-            if (!res || !labels) return;
-
-            try {
-                if (credentials.accessToken !== 'demo-mode') {
-                    await updateResourceLabelsApi(credentials.projectId, credentials.accessToken, res, labels);
-                } else {
-                    await new Promise(r => setTimeout(r, 100)); // fast mock
-                }
-                
-                // Update local state immediately for this item
-                setResources(prev => prev.map(r => {
-                    if (r.id === id) {
-                        return { ...r, labels, isUpdating: false, proposedLabels: undefined };
-                    }
-                    return r;
-                }));
-                success++;
-            } catch (e) {
-                failed++;
-                setResources(prev => prev.map(r => r.id === id ? { ...r, isUpdating: false } : r));
-            } finally {
-                processed++;
-                setBatchProgress({ processed, total: count });
-            }
-        });
-        await Promise.all(promises);
-     };
-
-     // Chunk loop
+     // 2. Process sequentially in chunks to allow stopping on error
+     const BATCH_SIZE = 5; 
+     
      for (let i = 0; i < count; i += BATCH_SIZE) {
-         await processChunk(idsToUpdate.slice(i, i + BATCH_SIZE));
+         if (errorOccurred) break;
+
+         const chunkIds = idsToUpdate.slice(i, i + BATCH_SIZE);
+         const promises = chunkIds.map(async (id) => {
+             if (errorOccurred) return; 
+
+             const res = resources.find(r => r.id === id);
+             const labels = updates.get(id);
+             if (!res || !labels) return;
+
+             try {
+                 if (credentials.accessToken !== 'demo-mode') {
+                     await updateResourceLabelsApi(credentials.projectId, credentials.accessToken, res, labels);
+                 } else {
+                     await new Promise(r => setTimeout(r, 100)); 
+                 }
+                 successfulUpdates.push(id);
+             } catch (e: any) {
+                 errorOccurred = e;
+                 throw e; 
+             }
+         });
+
+         try {
+             await Promise.all(promises);
+             setBatchProgress({ processed: Math.min(i + BATCH_SIZE, count), total: count });
+         } catch (e) {
+             errorOccurred = e;
+             break; 
+         }
      }
 
-     addNotification(`Batch finished: ${success} ok, ${failed} failed`, failed > 0 ? 'info' : 'success');
-     setTimeout(() => setBatchProgress(null), 3000);
+     if (errorOccurred) {
+         addNotification(`Transaction failed. Rolling back ${successfulUpdates.length} changes...`, 'warning');
+         setBatchProgress({ processed: successfulUpdates.length, total: successfulUpdates.length }); // Indication of rollback work
+
+         // --- ROLLBACK PHASE ---
+         // We must revert successful updates to their original state to ensure atomicity.
+         for (const id of successfulUpdates) {
+             const res = resources.find(r => r.id === id);
+             const originalLabels = originalStates.get(id);
+             
+             if (res && originalLabels) {
+                 try {
+                     if (credentials.accessToken !== 'demo-mode') {
+                         // IMPORTANT: We must fetch the FRESH resource to get the updated fingerprint 
+                         // caused by the "successful" update we are now undoing.
+                         const freshResource = await fetchResource(credentials.projectId, credentials.accessToken, res);
+                         if (freshResource) {
+                             await updateResourceLabelsApi(credentials.projectId, credentials.accessToken, freshResource, originalLabels);
+                         }
+                     }
+                 } catch (rollbackError) {
+                     console.error(`Critical: Failed to rollback resource ${id}`, rollbackError);
+                     addNotification(`Rollback failed for ${res.name}. Manual check required.`, 'error');
+                 }
+             }
+         }
+
+         // Reset UI state to original (remove isUpdating flag)
+         setResources(prev => prev.map(r => {
+             if (updates.has(r.id)) {
+                 return { ...r, isUpdating: false };
+             }
+             return r;
+         }));
+         
+         addNotification('Transaction aborted. All changes reverted.', 'error');
+
+     } else {
+         // --- COMMIT PHASE ---
+         // Success - Update UI and History locally
+         setResources(prev => prev.map(r => {
+             if (updates.has(r.id)) {
+                 const newLabels = updates.get(r.id)!;
+                 return { 
+                     ...r, 
+                     labels: newLabels, 
+                     isUpdating: false, 
+                     proposedLabels: undefined,
+                     history: [
+                         {
+                             timestamp: new Date(),
+                             actor: 'User (Batch)',
+                             changeType: 'UPDATE',
+                             previousLabels: originalStates.get(r.id) || {},
+                             newLabels: newLabels
+                         },
+                         ...(r.history || [])
+                     ]
+                 };
+             }
+             return r;
+         }));
+         
+         addNotification(`Transaction successful. Updated ${count} resources.`, 'success');
+     }
+
+     setTimeout(() => setBatchProgress(null), 1000);
 
   }, [resources, addNotification]);
 

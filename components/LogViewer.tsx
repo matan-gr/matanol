@@ -1,8 +1,13 @@
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { LogEntry } from '../types';
-import { Terminal, Download, RefreshCw, User, Box, Activity, ChevronRight, ChevronDown, FileText, Monitor, Globe, AlertOctagon } from 'lucide-react';
-import { Button, Badge } from './DesignSystem';
+import { 
+  Terminal, Download, RefreshCw, User, Box, Activity, 
+  ChevronRight, ChevronDown, FileText, Monitor, Globe, 
+  AlertOctagon, AlertTriangle, Search, Info, Code, FileJson
+} from 'lucide-react';
+import { Button, Input, Badge } from './DesignSystem';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface LogViewerProps {
   logs: LogEntry[];
@@ -10,32 +15,67 @@ interface LogViewerProps {
   isLoading?: boolean;
 }
 
+// --- Helpers ---
+
+const getMethodLabel = (methodName: string) => {
+  const parts = methodName.split('.');
+  const action = parts.pop();
+  const resource = parts.pop();
+  
+  // Custom Mappings
+  if (methodName.includes('setLabels')) return 'Update Labels';
+  if (methodName.includes('insert')) return `Create ${resource?.replace(/s$/, '')}`;
+  if (methodName.includes('delete')) return `Delete ${resource?.replace(/s$/, '')}`;
+  if (methodName.includes('stop')) return `Stop ${resource?.replace(/s$/, '')}`;
+  if (methodName.includes('start')) return `Start ${resource?.replace(/s$/, '')}`;
+  
+  // Fallback: Humanize PascalCase or camelCase
+  return (action || methodName).replace(/([A-Z])/g, ' $1').trim();
+};
+
+const ServiceIcon = ({ service }: { service?: string }) => {
+  if (service?.includes('compute')) return <Activity className="w-3.5 h-3.5 text-blue-500" />;
+  if (service?.includes('storage')) return <Box className="w-3.5 h-3.5 text-yellow-500" />;
+  if (service?.includes('sql')) return <Activity className="w-3.5 h-3.5 text-cyan-500" />; // Database icon not available in this scope, reused Activity
+  return <Terminal className="w-3.5 h-3.5 text-slate-400" />;
+};
+
+const JsonTree = ({ data }: { data: any }) => (
+  <pre className="font-mono text-[10px] leading-relaxed text-slate-600 dark:text-slate-300 whitespace-pre-wrap break-all bg-slate-50 dark:bg-slate-950 p-4 rounded-lg border border-slate-200 dark:border-slate-800 overflow-x-auto">
+    {JSON.stringify(data, null, 2)}
+  </pre>
+);
+
 export const LogViewer: React.FC<LogViewerProps> = React.memo(({ logs, onRefresh, isLoading }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [autoScroll, setAutoScroll] = useState(true);
+  const [search, setSearch] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
 
-  // Layout effect to scroll immediately after render updates
+  // Filter Logic
+  const filteredLogs = useMemo(() => {
+    if (!search) return logs;
+    const lower = search.toLowerCase();
+    return logs.filter(l => 
+        l.methodName.toLowerCase().includes(lower) || 
+        l.principalEmail.toLowerCase().includes(lower) || 
+        l.resourceName.toLowerCase().includes(lower) ||
+        (l.status && l.status.message && l.status.message.toLowerCase().includes(lower))
+    );
+  }, [logs, search]);
+
+  // Scroll Handling
   useEffect(() => {
-    if (autoScroll && scrollRef.current && !expandedId) {
+    if (autoScroll && scrollRef.current && !expandedId && !search) {
       scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
     }
-  }, [logs, autoScroll, expandedId]);
+  }, [filteredLogs, autoScroll, expandedId, search]);
 
-  // Optimized Scroll Handler using requestAnimationFrame to prevent layout thrashing
   const handleScroll = () => {
     if (!scrollRef.current) return;
-    
-    requestAnimationFrame(() => {
-        if (!scrollRef.current) return;
-        const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
-        // Tolerance of 20px
-        const isAtBottom = scrollHeight - scrollTop - clientHeight < 20;
-        
-        if (isAtBottom !== autoScroll) {
-            setAutoScroll(isAtBottom);
-        }
-    });
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
+    if (isAtBottom !== autoScroll) setAutoScroll(isAtBottom);
   };
 
   const toggleExpand = (id: string) => {
@@ -43,169 +83,210 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({ logs, onRefresh
   };
 
   return (
-    <div className="bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-lg flex flex-col h-full">
-      <div className="flex items-center justify-between px-4 py-3 bg-slate-100 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 shrink-0">
-        <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
-          <Terminal className="w-4 h-4" />
-          <span className="text-xs font-mono font-semibold uppercase tracking-wider">Cloud Audit Logs (Admin Activity)</span>
+    <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex flex-col h-full ring-1 ring-slate-900/5">
+      
+      {/* 1. Toolbar */}
+      <div className="flex items-center justify-between px-4 py-3 bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-800 shrink-0 gap-4">
+        <div className="flex items-center gap-3">
+           <div className="p-2 bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm">
+              <Terminal className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+           </div>
+           <div>
+              <h3 className="text-sm font-bold text-slate-800 dark:text-white">Audit Trail</h3>
+              <p className="text-[10px] text-slate-500 font-medium">{filteredLogs.length} events logged</p>
+           </div>
         </div>
+
+        <div className="flex-1 max-w-md">
+           <Input 
+              placeholder="Search logs (method, user, resource)..." 
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              icon={<Search className="w-3.5 h-3.5" />}
+              className="bg-white dark:bg-slate-900 h-9 text-xs"
+           />
+        </div>
+
         <div className="flex items-center gap-2">
           {onRefresh && (
              <Button 
-                variant="ghost" 
+                variant="outline" 
                 size="sm" 
                 onClick={onRefresh} 
                 disabled={isLoading}
-                className="h-8 w-8 p-0"
+                leftIcon={<RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />}
+                className="bg-white dark:bg-slate-900"
              >
-                <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+                Refresh
              </Button>
           )}
-          <button className="text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors">
+          <Button variant="ghost" size="sm" className="h-9 w-9 p-0 text-slate-500">
             <Download className="w-4 h-4" />
-          </button>
+          </Button>
         </div>
       </div>
       
-      {/* Table Header */}
-      <div className="grid grid-cols-12 gap-4 px-4 py-2 bg-slate-50 dark:bg-slate-900/50 text-[10px] uppercase font-bold text-slate-500 border-b border-slate-200 dark:border-slate-800 pr-6 shrink-0">
-         <div className="col-span-1"></div>
-         <div className="col-span-2">Timestamp</div>
-         <div className="col-span-1">Severity</div>
-         <div className="col-span-2">Method</div>
-         <div className="col-span-3">Principal / IP</div>
-         <div className="col-span-3">Resource</div>
+      {/* 2. List Header */}
+      <div className="grid grid-cols-[40px_120px_1fr_1.5fr_1.5fr] gap-4 px-4 py-2 bg-slate-100 dark:bg-slate-900 text-[10px] uppercase font-bold text-slate-500 border-b border-slate-200 dark:border-slate-800 pr-6 shrink-0 tracking-wider">
+         <div className="text-center">#</div>
+         <div>Timestamp</div>
+         <div>Action</div>
+         <div>Resource</div>
+         <div>Actor</div>
       </div>
 
+      {/* 3. Log List */}
       <div 
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto p-0 font-mono text-xs divide-y divide-slate-100 dark:divide-slate-800/30 bg-white dark:bg-slate-950 scroll-smooth"
+        className="flex-1 overflow-y-auto p-0 font-sans text-xs divide-y divide-slate-100 dark:divide-slate-800/50 bg-white dark:bg-slate-950 scroll-smooth"
       >
-        {logs.length === 0 && (
-          <div className="text-slate-500 dark:text-slate-600 text-center py-20 italic flex flex-col items-center gap-2 h-full justify-center">
-             <Activity className="w-8 h-8 opacity-20" />
-             <span>No audit logs found.</span>
+        {filteredLogs.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-3">
+             <div className="w-12 h-12 rounded-full bg-slate-50 dark:bg-slate-900 flex items-center justify-center">
+                <Search className="w-6 h-6 opacity-30" />
+             </div>
+             <p>No matching logs found</p>
           </div>
         )}
-        {logs.map((log) => {
+
+        {filteredLogs.map((log) => {
           const isExpanded = expandedId === log.id;
-          const isErrorStatus = log.status && log.status.code !== 0;
+          const isError = log.severity === 'ERROR' || log.severity === 'CRITICAL' || (log.status && log.status.code !== 0);
+          const methodLabel = getMethodLabel(log.methodName);
+
           return (
             <div key={log.id} className="group">
               <div 
                 onClick={() => toggleExpand(log.id)}
-                className={`grid grid-cols-12 gap-4 px-4 py-3 cursor-pointer transition-colors items-center ${isExpanded ? 'bg-blue-50/50 dark:bg-slate-900' : 'hover:bg-slate-50 dark:hover:bg-slate-900/30'}`}
+                className={`
+                   grid grid-cols-[40px_120px_1fr_1.5fr_1.5fr] gap-4 px-4 py-3 cursor-pointer transition-all items-center border-l-2
+                   ${isExpanded 
+                     ? 'bg-blue-50/50 dark:bg-blue-900/10 border-l-blue-500' 
+                     : isError 
+                        ? 'border-l-red-500 hover:bg-red-50/50 dark:hover:bg-red-900/10' 
+                        : 'border-l-transparent hover:bg-slate-50 dark:hover:bg-slate-900/40'}
+                `}
               >
-                <div className="col-span-1 flex justify-center">
-                    {isExpanded ? <ChevronDown className="w-3 h-3 text-slate-400" /> : <ChevronRight className="w-3 h-3 text-slate-400" />}
+                {/* Icon Column */}
+                <div className="flex justify-center">
+                    <div className={`
+                       w-6 h-6 rounded-md flex items-center justify-center 
+                       ${isError ? 'bg-red-100 text-red-600 dark:bg-red-900/30' : 'bg-slate-100 text-slate-500 dark:bg-slate-800'}
+                    `}>
+                        {isError ? <AlertOctagon className="w-3.5 h-3.5" /> : <ServiceIcon service={log.serviceName} />}
+                    </div>
                 </div>
 
-                <div className="col-span-2 text-slate-600 dark:text-slate-500 flex flex-col">
-                  <span>{log.timestamp.toLocaleDateString()}</span>
-                  <span className="text-[10px] opacity-70">{log.timestamp.toLocaleTimeString()}</span>
+                {/* Time */}
+                <div className="flex flex-col text-slate-500 dark:text-slate-400">
+                  <span className="font-mono text-[11px] font-medium">{log.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'})}</span>
+                  <span className="text-[9px] opacity-70">{log.timestamp.toLocaleDateString()}</span>
                 </div>
                 
-                <div className="col-span-1 flex flex-col gap-1">
-                  <span className={`
-                    px-1.5 py-0.5 rounded text-[10px] font-bold border text-center
-                    ${log.severity === 'INFO' || log.severity === 'NOTICE' ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-500/20' : 
-                      log.severity === 'WARNING' ? 'bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-500/20' :
-                      log.severity === 'ERROR' || log.severity === 'CRITICAL' ? 'bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/20' : 
-                      'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'}
-                  `}>
-                    {log.severity}
-                  </span>
-                  {isErrorStatus && <span className="text-[9px] text-red-500 font-bold text-center">FAILED</span>}
+                {/* Action */}
+                <div className="flex items-center gap-2 min-w-0">
+                   <span className={`font-semibold truncate ${isError ? 'text-red-600 dark:text-red-400' : 'text-slate-700 dark:text-slate-200'}`}>
+                      {methodLabel}
+                   </span>
+                   {isError && <Badge variant="error" className="px-1 py-0 text-[9px]">FAIL</Badge>}
                 </div>
 
-                <div className="col-span-2 text-slate-700 dark:text-slate-300 truncate font-semibold" title={log.methodName}>
-                  {log.methodName.split('.').pop()}
+                {/* Resource */}
+                <div className="flex items-center gap-1.5 min-w-0 text-slate-600 dark:text-slate-400">
+                  <Box className="w-3.5 h-3.5 shrink-0 opacity-50" />
+                  <span className="truncate font-mono text-[11px]" title={log.resourceName}>{log.resourceName}</span>
                 </div>
 
-                <div className="col-span-3 flex flex-col gap-0.5">
-                   <div className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400 truncate" title={log.principalEmail}>
-                      <User className="w-3 h-3 shrink-0 opacity-50" />
-                      <span className="truncate">{log.principalEmail.replace('serviceAccount:', '').split('@')[0]}</span>
+                {/* Actor */}
+                <div className="flex items-center gap-1.5 min-w-0 justify-between">
+                   <div className="flex items-center gap-1.5 truncate">
+                      <User className="w-3.5 h-3.5 shrink-0 opacity-50" />
+                      <span className="truncate text-slate-600 dark:text-slate-400" title={log.principalEmail}>
+                         {log.principalEmail.replace('serviceAccount:', '').split('@')[0]}
+                      </span>
                    </div>
-                   {log.callerIp && (
-                      <div className="flex items-center gap-1.5 text-[10px] text-slate-400 dark:text-slate-600">
-                         <Globe className="w-2.5 h-2.5 shrink-0 opacity-50" />
-                         <span>{log.callerIp}</span>
-                      </div>
-                   )}
-                </div>
-
-                <div className="col-span-3 flex items-center gap-1.5 text-slate-500 dark:text-slate-400 truncate" title={log.resourceName}>
-                  <Box className="w-3 h-3 shrink-0 opacity-50" />
-                  <span className="truncate">{log.resourceName}</span>
+                   {isExpanded ? <ChevronDown className="w-3 h-3 text-slate-300" /> : <ChevronRight className="w-3 h-3 text-slate-300" />}
                 </div>
               </div>
 
-              {/* Expanded Details */}
-              {isExpanded && (
-                <div className="px-12 py-4 bg-slate-50 dark:bg-slate-900/50 border-t border-slate-100 dark:border-slate-800/50 text-xs text-slate-600 dark:text-slate-400 animate-in slide-in-from-top-1 duration-200">
-                   <div className="grid grid-cols-2 gap-8">
-                      <div className="space-y-4">
-                         <div>
-                            <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Full Method Name</div>
-                            <code className="bg-white dark:bg-slate-950 px-2 py-1 rounded border border-slate-200 dark:border-slate-800 font-mono text-slate-700 dark:text-slate-300 break-all block">
-                              {log.methodName}
-                            </code>
-                         </div>
-                         <div>
-                            <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Resource Fully Qualified Name</div>
-                            <code className="bg-white dark:bg-slate-950 px-2 py-1 rounded border border-slate-200 dark:border-slate-800 font-mono text-slate-700 dark:text-slate-300 break-all block">
-                              {log.resourceName}
-                            </code>
-                         </div>
-                         {log.status && (
-                            <div>
-                               <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Operation Status</div>
-                               <div className={`flex items-center gap-2 ${log.status.code !== 0 ? 'text-red-500' : 'text-emerald-500'}`}>
-                                  {log.status.code !== 0 ? <AlertOctagon className="w-4 h-4"/> : <Activity className="w-4 h-4"/>}
-                                  <span className="font-mono font-bold">{log.status.code === 0 ? 'SUCCESS' : `ERROR CODE ${log.status.code}`}</span>
-                                  {log.status.message && <span className="text-slate-500 ml-2">- {log.status.message}</span>}
-                               </div>
-                            </div>
-                         )}
-                      </div>
-                      <div className="space-y-4">
-                         <div>
-                            <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Request Metadata</div>
-                            <div className="space-y-2">
-                               <div className="flex items-center gap-2">
-                                  <User className="w-3 h-3 text-slate-400" />
-                                  <span className="font-semibold text-slate-700 dark:text-slate-300">Principal:</span> {log.principalEmail}
-                               </div>
-                               {log.callerIp && (
-                                  <div className="flex items-center gap-2">
-                                     <Globe className="w-3 h-3 text-slate-400" />
-                                     <span className="font-semibold text-slate-700 dark:text-slate-300">Caller IP:</span> {log.callerIp}
-                                  </div>
-                               )}
-                               {log.userAgent && (
-                                  <div className="flex items-start gap-2">
-                                     <Monitor className="w-3 h-3 text-slate-400 mt-0.5" />
-                                     <div>
-                                        <span className="font-semibold text-slate-700 dark:text-slate-300">User Agent:</span>
-                                        <div className="text-[10px] text-slate-500 break-all leading-tight mt-0.5">{log.userAgent}</div>
-                                     </div>
-                                  </div>
-                               )}
-                            </div>
-                         </div>
-                         <div>
-                            <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Summary</div>
-                            <div className="flex items-start gap-2 bg-blue-50 dark:bg-blue-900/20 p-2 rounded text-blue-800 dark:text-blue-200">
-                               <FileText className="w-3 h-3 mt-0.5 shrink-0" />
-                               <span>{log.summary || 'No summary available.'}</span>
-                            </div>
-                         </div>
-                      </div>
-                   </div>
-                </div>
-              )}
+              {/* Expanded Details Pane */}
+              <AnimatePresence>
+                {isExpanded && (
+                  <motion.div 
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    className="overflow-hidden bg-slate-50 dark:bg-slate-950/30 border-b border-slate-100 dark:border-slate-800"
+                  >
+                     <div className="px-14 py-4 grid grid-cols-1 md:grid-cols-2 gap-8">
+                        
+                        {/* Left: Summary & Metadata */}
+                        <div className="space-y-4">
+                           <div>
+                              <h4 className="text-[10px] uppercase font-bold text-slate-400 mb-2 flex items-center gap-1">
+                                 <Info className="w-3 h-3" /> Event Summary
+                              </h4>
+                              <div className="space-y-2 text-xs">
+                                 <div className="flex justify-between py-1 border-b border-slate-200 dark:border-slate-800 border-dashed">
+                                    <span className="text-slate-500">Method</span>
+                                    <code className="bg-white dark:bg-slate-900 px-1.5 rounded border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-mono">{log.methodName}</code>
+                                 </div>
+                                 <div className="flex justify-between py-1 border-b border-slate-200 dark:border-slate-800 border-dashed">
+                                    <span className="text-slate-500">Principal</span>
+                                    <span className="text-slate-700 dark:text-slate-300">{log.principalEmail}</span>
+                                 </div>
+                                 {log.callerIp && (
+                                    <div className="flex justify-between py-1 border-b border-slate-200 dark:border-slate-800 border-dashed">
+                                       <span className="text-slate-500">Caller IP</span>
+                                       <span className="font-mono text-slate-700 dark:text-slate-300">{log.callerIp}</span>
+                                    </div>
+                                 )}
+                                 {log.userAgent && (
+                                    <div className="py-1">
+                                       <span className="text-slate-500 block mb-1">User Agent</span>
+                                       <div className="text-[10px] text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-900 p-1.5 rounded break-all leading-tight">
+                                          {log.userAgent}
+                                       </div>
+                                    </div>
+                                 )}
+                              </div>
+                           </div>
+
+                           {log.status && log.status.code !== 0 && (
+                              <div className="bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/30 p-3 rounded-lg">
+                                 <div className="text-[10px] uppercase font-bold text-red-500 mb-1 flex items-center gap-1">
+                                    <AlertTriangle className="w-3 h-3" /> Error Details
+                                 </div>
+                                 <div className="text-xs text-red-700 dark:text-red-300 font-mono">
+                                    Code {log.status.code}: {log.status.message}
+                                 </div>
+                              </div>
+                           )}
+                        </div>
+
+                        {/* Right: Payload Inspector */}
+                        <div className="space-y-2">
+                           <div className="flex justify-between items-center">
+                              <h4 className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
+                                 <FileJson className="w-3 h-3" /> Request Payload
+                              </h4>
+                              {log.metadata && <span className="text-[9px] bg-slate-200 dark:bg-slate-800 text-slate-500 px-1.5 rounded">JSON</span>}
+                           </div>
+                           
+                           {log.metadata ? (
+                              <JsonTree data={log.metadata} />
+                           ) : (
+                              <div className="h-24 flex items-center justify-center bg-slate-100 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 border-dashed text-slate-400 text-xs italic">
+                                 No detailed payload captured
+                              </div>
+                           )}
+                        </div>
+
+                     </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           );
         })}

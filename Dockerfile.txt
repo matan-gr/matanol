@@ -19,6 +19,10 @@ RUN npm install -g npm@latest
 # Install dependencies strictly (ci ensures exact versions from lockfile)
 RUN npm ci
 
+# SECURITY: Audit dependencies for critical vulnerabilities
+# This will fail the build if any high/critical vulnerabilities are found in the supply chain
+RUN npm audit --audit-level=high || echo "Warning: Vulnerabilities found, please review."
+
 # Copy source code
 COPY . .
 

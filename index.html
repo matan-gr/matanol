@@ -7,7 +7,14 @@
     <title>Yalla Label - High Speed Governance</title>
     <!-- Favicon: A Tag with a Lightning Bolt -->
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236366f1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z'%3E%3C/path%3E%3Cpath d='M9.5 10l1.5-3h3l-1.5 5 3.5-.5-5 5 .5-3.5h-2.5l.5-3z' fill='%23F59E0B' stroke='none'/%3E%3C/svg%3E" />
+    
+    <!-- Security: External Theme Loader (Run early to prevent FOUC) -->
+    <script src="/js/theme-loader.js"></script>
+
+    <!-- Tailwind Play CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Tailwind Configuration (Inlined for reliability) -->
     <script>
       tailwind.config = {
         darkMode: 'class',
@@ -21,21 +28,7 @@
         }
       }
     </script>
-    <script>
-      // Production Readiness: Immediate Theme Application
-      // This script runs before the body loads to prevent white flash on dark mode preference
-      (function() {
-        try {
-          var localTheme = localStorage.getItem('theme');
-          var supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;
-          if (localTheme === 'dark' || (!localTheme && supportDarkMode)) {
-            document.documentElement.classList.add('dark');
-          } else {
-            document.documentElement.classList.remove('dark');
-          }
-        } catch (e) {}
-      })();
-    </script>
+
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reactflow@11.10.1/dist/style.css" />
   <script type="importmap">

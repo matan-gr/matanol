@@ -2,40 +2,40 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 :root {
-  --glass-border: rgba(255, 255, 255, 0.08);
-  --glass-bg: rgba(9, 9, 11, 0.75); /* Zinc 950 */
-  --glass-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
   --sidebar-width: 280px;
 }
 
-/* --- Enterprise Dark Mode --- */
-html.dark body {
-  color: #f8fafc; /* Slate 50 */
-  background-color: #020617; /* Slate 950 */
-  --bg-card: #0f172a; /* Slate 900 */
-  --border-color: #1e293b; /* Slate 800 */
-  --accent-glow: rgba(99, 102, 241, 0.15);
-}
-
-/* --- Enterprise Light Mode (Refined) --- */
-html:not(.dark) body {
-  color: #1e293b; /* Slate 800 - Sharper contrast */
-  background-color: #f0f4f8; /* Cool Gray/Blue Tint - Tech feel */
-  --bg-card: #ffffff;
-  --border-color: #e2e8f0; /* Slate 200 */
-  --accent-glow: rgba(79, 70, 229, 0.08);
-}
-
+/* --- Typography --- */
 body {
   font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  font-feature-settings: 'tnum' on, 'cv11' on, 'ss01' on, 'cv05' on;
+  font-feature-settings: 'tnum' on, 'cv11' on, 'ss01' on, 'cv05' on; /* Tabular nums, specific character variants */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
   margin: 0;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-/* Technological Noise Texture */
+/* --- Enterprise Light Mode --- */
+/* Clean, high-brightness white foundation with sharp borders */
+html:not(.dark) body {
+  color: #0f172a; /* Slate 900 */
+  background-color: #ffffff; /* Pure White */
+}
+
+/* --- Enterprise Dark Mode --- */
+/* Deep, rich "Void" dark mode using Gray 950/Zinc 950 rather than blue-tinted Slate */
+html.dark body {
+  color: #f8fafc; /* Slate 50 */
+  background-color: #030712; /* Gray 950 - Sharper black */
+}
+
+::selection {
+  background: rgba(99, 102, 241, 0.3); /* Indigo 500 */
+  color: inherit;
+}
+
+/* --- Technological Noise Texture --- */
 .bg-noise {
   position: fixed;
   top: 0;
@@ -44,16 +44,12 @@ body {
   height: 100vh;
   z-index: 9999;
   pointer-events: none;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.04'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.04'/%3E%3C/svg%3E");
   mix-blend-mode: overlay;
 }
 
-::selection {
-  background: rgba(99, 102, 241, 0.2); /* Indigo tint */
-  color: inherit;
-}
-
-/* Refined Background Mesh - Dark Mode */
+/* --- Refined Background Mesh --- */
+/* Dark Mode: "Cyber Void" - Deep blacks with subtle vibrant accent glows */
 html.dark .bg-mesh {
   position: fixed;
   top: 0;
@@ -61,16 +57,16 @@ html.dark .bg-mesh {
   width: 100vw;
   height: 100vh;
   z-index: -1;
-  background: 
-    radial-gradient(circle at 0% 0%, rgba(30, 41, 59, 0.5), transparent 40%),
-    radial-gradient(circle at 100% 0%, rgba(15, 23, 42, 0.5), transparent 40%),
-    radial-gradient(circle at 100% 100%, rgba(30, 27, 75, 0.3), transparent 40%);
-  filter: blur(80px);
+  background-color: #030712; /* Base Black */
+  background-image: 
+    radial-gradient(circle at 15% 50%, rgba(67, 56, 202, 0.15), transparent 30%), /* Indigo 700 */
+    radial-gradient(circle at 85% 30%, rgba(88, 28, 135, 0.15), transparent 30%), /* Purple 900 */
+    radial-gradient(circle at 50% 0%, rgba(15, 23, 42, 0.8), transparent 50%); /* Top shadow */
   opacity: 1;
   pointer-events: none;
 }
 
-/* Refined Background Mesh - Light Mode */
+/* Light Mode: "Clean Sheet" - Pure white with very subtle cool gray nuances */
 html:not(.dark) .bg-mesh {
   position: fixed;
   top: 0;
@@ -78,44 +74,52 @@ html:not(.dark) .bg-mesh {
   width: 100vw;
   height: 100vh;
   z-index: -1;
-  background: 
-    radial-gradient(circle at 0% 0%, rgba(255, 255, 255, 0.8), transparent 50%),
-    radial-gradient(circle at 100% 100%, rgba(224, 231, 255, 0.4), transparent 50%); /* Subtle indigo bleed */
+  background-color: #ffffff;
+  background-image: 
+    radial-gradient(circle at 0% 0%, rgba(224, 231, 255, 0.4), transparent 40%), /* Indigo 50 */
+    radial-gradient(circle at 100% 100%, rgba(243, 244, 246, 0.8), transparent 40%); /* Gray 100 */
   opacity: 1;
   pointer-events: none;
 }
 
+/* --- Glass Panels --- */
 .glass-panel {
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
 }
 
+/* Dark: Higher contrast borders, darker fills */
 html.dark .glass-panel {
-  background: rgba(15, 23, 42, 0.6); 
-  border: 1px solid var(--border-color);
-  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.3);
+  background: rgba(17, 24, 39, 0.7); /* Gray 900 @ 70% */
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.15);
 }
 
+/* Light: Crisper borders, cleaner fills */
 html:not(.dark) .glass-panel {
   background: rgba(255, 255, 255, 0.9);
-  border: 1px solid #cbd5e1;
-  box-shadow: 0 8px 30px -4px rgba(0, 0, 0, 0.05); /* Softer, deeper shadow */
+  border: 1px solid rgba(229, 231, 235, 0.8); /* Gray 200 */
+  box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.05);
 }
 
-/* Sleek Scrollbar */
+/* --- Scrollbars --- */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
   background: transparent; 
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.3); 
-  border-radius: 10px;
+  background: rgba(156, 163, 175, 0.4); /* Gray 400 */
+  border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(100, 116, 139, 0.5); 
+  background: rgba(107, 114, 128, 0.6); /* Gray 500 */
+  border: 2px solid transparent;
+  background-clip: content-box;
 }
 
 .no-scrollbar::-webkit-scrollbar {
@@ -126,20 +130,13 @@ html:not(.dark) .glass-panel {
   scrollbar-width: none;
 }
 
-tr {
-  transition-property: transform, box-shadow, background-color, opacity;
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-  transition-duration: 200ms;
-}
-
 .custom-scrollbar::-webkit-scrollbar {
-  width: 4px;
+  width: 5px;
 }
 
-/* Utility for tech-borders */
-.tech-border-b {
-  border-bottom: 1px solid var(--border-color);
-}
-.tech-border-r {
-  border-right: 1px solid var(--border-color);
+/* --- Transitions --- */
+tr {
+  transition-property: background-color, border-color, opacity, transform, box-shadow;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
 }

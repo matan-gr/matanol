@@ -2,16 +2,26 @@
 /**
  * Safely parses JSON input, specifically designed to handle LLM outputs
  * which may contain Markdown code blocks (```json ... ```) or extraneous text.
+ * 
+ * SECURITY: Includes protection against Prototype Pollution via reviver function.
  */
 export const safeParseJSON = <T>(text: string | undefined): T | null => {
   if (!text) return null;
+
+  // Reviver to block dangerous keys
+  const secureReviver = (key: string, value: any) => {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+      return undefined;
+    }
+    return value;
+  };
 
   try {
     // 1. Remove Markdown code blocks
     let clean = text.replace(/```json\n?|```/g, '').trim();
 
-    // 2. Attempt direct parse
-    return JSON.parse(clean);
+    // 2. Attempt direct parse with reviver
+    return JSON.parse(clean, secureReviver);
   } catch (e) {
     // 3. Fallback: Try to find the first '{' or '[' and the last '}' or ']'
     try {
@@ -32,7 +42,7 @@ export const safeParseJSON = <T>(text: string | undefined): T | null => {
 
       if (start !== -1 && end !== -1) {
         const extracted = text.substring(start, end + 1);
-        return JSON.parse(extracted);
+        return JSON.parse(extracted, secureReviver);
       }
     } catch (retryError) {
       console.error("JSON Parse Error (Retry Failed):", retryError);

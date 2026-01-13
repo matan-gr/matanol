@@ -149,6 +149,8 @@ export interface LogEntry {
   userAgent?: string;
   status?: { code?: number; message?: string };
   location?: string;
+  metadata?: Record<string, any>;
+  serviceName?: string;
 }
 
 export interface AnalysisResult {
