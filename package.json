@@ -16,7 +16,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "lucide-react": "^0.469.0",
-    "@google/genai": "^0.1.0",
+    "@google/genai": "*",
     "framer-motion": "^12.4.2",
     "reactflow": "^11.11.4",
     "dagre": "^0.8.5"
