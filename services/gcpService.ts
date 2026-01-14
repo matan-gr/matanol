@@ -31,12 +31,13 @@ const safeLog = (message: string, error: any) => {
 };
 
 // Simple concurrency limiter to prevent 429 Quota Exceeded
+// Increased concurrency for better throughput on HTTP/2 enabled connections
 class RateLimiter {
   private queue: (() => Promise<any>)[] = [];
   private active = 0;
   private maxConcurrency: number;
 
-  constructor(maxConcurrency = 8) { // GCP limit is often around 10-20 concurrent reqs/sec per IP
+  constructor(maxConcurrency = 12) { 
     this.maxConcurrency = maxConcurrency;
   }
 
@@ -71,7 +72,7 @@ class RateLimiter {
   }
 }
 
-const apiLimiter = new RateLimiter(8);
+const apiLimiter = new RateLimiter(12);
 
 const parseGcpError = async (response: Response): Promise<string> => {
   try {
@@ -97,7 +98,7 @@ export const fetchWithBackoff = async (
   url: string, 
   options: RequestInit, 
   retries = 3, 
-  backoff = 1000
+  backoff = 500
 ): Promise<Response> => {
   try {
     const response = await fetch(url, options);
@@ -105,15 +106,18 @@ export const fetchWithBackoff = async (
     // Retry on 429 (Rate Limit) or 5xx (Server Error)
     if (!response.ok && (response.status === 429 || response.status >= 500)) {
       if (retries > 0) {
-        await new Promise(resolve => setTimeout(resolve, backoff));
-        return fetchWithBackoff(url, options, retries - 1, backoff * 2);
+        // Jitter the backoff to prevent thundering herd
+        const jitter = Math.random() * 200;
+        await new Promise(resolve => setTimeout(resolve, backoff + jitter));
+        return fetchWithBackoff(url, options, retries - 1, backoff * 1.5); // Smoother exp backoff
       }
     }
     return response;
   } catch (error) {
     if (retries > 0) {
-      await new Promise(resolve => setTimeout(resolve, backoff));
-      return fetchWithBackoff(url, options, retries - 1, backoff * 2);
+      const jitter = Math.random() * 200;
+      await new Promise(resolve => setTimeout(resolve, backoff + jitter));
+      return fetchWithBackoff(url, options, retries - 1, backoff * 1.5);
     }
     throw error;
   }
@@ -141,10 +145,7 @@ const fetchPagedResource = async <T>(
       }));
 
       if (!response.ok) {
-        // Soft fail: return what we have so far if pagination fails halfway, 
-        // unless it's auth error which is critical.
         if (response.status === 401) throw new Error("401");
-        // Sanitize URL before logging warning
         const safeUrl = url.split('?')[0]; 
         console.warn(`Partial fetch failure: ${response.status} for ${safeUrl}`);
         return resources; 
@@ -167,7 +168,6 @@ const fetchPagedResource = async <T>(
     } while (nextPageToken);
   } catch (error: any) {
     if (error.message === '401') throw error;
-    // Otherwise swallow error to allow other resources to load
   }
   return resources;
 };
@@ -175,8 +175,6 @@ const fetchPagedResource = async <T>(
 // --- Resource Fetchers ---
 
 const fetchComputeEngine = async (projectId: string, accessToken: string) => {
-  // We use aggregatedList for efficiency, but it can be slow.
-  // Added 'interface' to disks request
   const fields = `items/*/instances(id,name,description,machineType,cpuPlatform,status,creationTimestamp,scheduling/provisioningModel,disks(deviceName,diskSizeGb,type,boot,interface),guestAccelerators(acceleratorType,acceleratorCount),networkInterfaces(network,networkIP,accessConfigs/natIP),tags/items,serviceAccounts/email,labels,labelFingerprint),nextPageToken`;
   const url = `${BASE_URL}/${projectId}/aggregated/instances?maxResults=500&fields=${encodeURIComponent(fields)}`;
   
@@ -186,7 +184,6 @@ const fetchComputeEngine = async (projectId: string, accessToken: string) => {
 
   if (!response.ok) {
     if (response.status === 401) throw new Error("401");
-    // 403 likely means Compute API not enabled or no permissions. Return empty to avoid crashing app.
     return [];
   }
 
@@ -198,11 +195,10 @@ const fetchComputeEngine = async (projectId: string, accessToken: string) => {
       if ((scopeData as any).instances) {
         const zone = scope.replace('zones/', '').replace('regions/', '');
         (scopeData as any).instances.forEach((inst: any) => {
-           // Parse machine type from URL "zones/us-central1-a/machineTypes/n1-standard-1"
            const machineTypeShort = inst.machineType?.split('/').pop() || 'unknown';
            
            resources.push({
-              id: String(inst.id), // Ensure string ID
+              id: String(inst.id),
               name: inst.name,
               description: inst.description || (inst.cpuPlatform ? `CPU: ${inst.cpuPlatform}` : undefined),
               type: 'INSTANCE',
@@ -220,7 +216,7 @@ const fetchComputeEngine = async (projectId: string, accessToken: string) => {
                 sizeGb: parseInt(d.diskSizeGb || '0', 10),
                 type: d.type ? d.type.split('/').pop() : 'pd-standard',
                 boot: !!d.boot,
-                interface: d.interface // NVMe, SCSI
+                interface: d.interface 
               })) || [],
               gpus: inst.guestAccelerators?.map((g: any) => ({
                   name: g.acceleratorType?.split('/').pop(),
@@ -278,17 +274,11 @@ const fetchDisks = async (projectId: string, accessToken: string) => {
   return resources;
 };
 
-// --- Incremental Loader ---
-
 export const fetchAllResources = async (
   projectId: string,
   accessToken: string,
   onChunk: (resources: GceResource[], source: string) => void
 ): Promise<void> => {
-  
-  // We launch distinct fetchers in parallel, but rate-limited by the `apiLimiter` class internally.
-  // As each fetcher completes, we pump data to the UI.
-
   const tasks = [
     {
       name: 'Virtual Machines',
@@ -301,26 +291,23 @@ export const fetchAllResources = async (
     {
       name: 'Cloud Run Services',
       fn: () => fetchPagedResource(
-        () => `${RUN_BASE_URL}/${projectId}/locations/-/services`, // Use wildcards for global discovery
+        () => `${RUN_BASE_URL}/${projectId}/locations/-/services`,
         accessToken, 'services', 
         (svc: any) => {
-            // Cloud Run v2 API mapping
             const container = svc.template?.containers?.[0];
             const limits = container?.resources?.limits;
-            
-            // Ingress mapping
             let ingress: 'all' | 'internal' = 'all';
             if (svc.ingress === 'INGRESS_TRAFFIC_INTERNAL_ONLY' || svc.ingress === 'INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER') {
                 ingress = 'internal';
             }
 
             return {
-                id: svc.name, // Full resource name as ID is safer for Cloud Run
+                id: svc.name,
                 name: svc.name.split('/').pop(),
                 description: svc.description,
                 type: 'CLOUD_RUN' as ResourceType,
-                zone: svc.name.split('/')[3], // locations/us-central1/services/...
-                status: 'READY', // Cloud Run is always "ready" if listed, or check `conditions`
+                zone: svc.name.split('/')[3],
+                status: 'READY',
                 creationTimestamp: svc.createTime,
                 provisioningModel: 'STANDARD' as ProvisioningModel,
                 machineType: 'Serverless',
@@ -362,7 +349,7 @@ export const fetchAllResources = async (
                     name: np.name,
                     version: np.version,
                     status: np.status,
-                    nodeCount: np.initialNodeCount || 0, // Note: autoscaled pools might have 0 initial
+                    nodeCount: np.initialNodeCount || 0,
                     machineType: np.config?.machineType || 'auto'
                 })) || []
             },
@@ -398,12 +385,7 @@ export const fetchAllResources = async (
             () => `${STORAGE_BASE_URL}?project=${projectId}`,
             accessToken, 'items',
             (bucket: any) => {
-                // Heuristic for public access: 
-                // if iamConfiguration.publicAccessPrevention is NOT enforced, it *might* be public via ACLs.
-                // A true public check requires analyzing IAM policies which is expensive.
-                // We will assume "Public" if prevention is not enforced for visibility.
                 const isPublic = bucket.iamConfiguration?.publicAccessPrevention !== 'enforced';
-
                 return {
                     id: bucket.id,
                     name: bucket.name,
@@ -413,7 +395,7 @@ export const fetchAllResources = async (
                     creationTimestamp: bucket.timeCreated,
                     provisioningModel: 'STANDARD' as ProvisioningModel,
                     storageClass: bucket.storageClass,
-                    locationType: bucket.locationType, // multi-region, region, etc.
+                    locationType: bucket.locationType,
                     publicAccess: isPublic,
                     labels: bucket.labels || {},
                     labelFingerprint: bucket.etag,
@@ -424,8 +406,6 @@ export const fetchAllResources = async (
     }
   ];
 
-  // Execute all tasks. We don't await them sequentially.
-  // We use Promise.allSettled to ensure one failure doesn't kill the whole app.
   const promises = tasks.map(async (task) => {
     try {
       const data = await task.fn();
@@ -433,15 +413,12 @@ export const fetchAllResources = async (
         onChunk(data, task.name);
       }
     } catch (e: any) {
-      if (e.message === '401') throw e; // Fatal auth error
+      if (e.message === '401') throw e; 
       safeLog(`Fetch warning for ${task.name}`, e);
-      // We do not rethrow, so partial results can be displayed
     }
   });
 
   const results = await Promise.allSettled(promises);
-  
-  // Check for critical auth failures in the results
   const authFailure = results.find(r => r.status === 'rejected' && (r.reason as Error).message === '401');
   if (authFailure) throw new Error("Authentication Failed (401)");
 };
@@ -472,8 +449,6 @@ export const fetchResource = async (projectId: string, accessToken: string, reso
       if (!response.ok) return null;
       const data = await response.json();
       
-      // We return the original resource with updated critical fields
-      // Important: Map different API eTag/fingerprint fields to our internal model
       return {
           ...resource,
           labelFingerprint: data.labelFingerprint || data.etag || ''
@@ -534,7 +509,6 @@ export const updateResourceLabels = async (
     throw new Error(`Updating labels for type ${resource.type} not supported yet.`);
   }
   
-  // Rate limited update with backoff
   const response = await apiLimiter.add(() => fetchWithBackoff(url, {
     method: method,
     headers: {
@@ -545,12 +519,10 @@ export const updateResourceLabels = async (
   }));
 
    if (!response.ok) {
-    // Atomic Recovery: If 412 (Precondition Failed), fetch latest fingerprint and retry once
     if (response.status === 412 && retryOn412) {
         console.warn(`Concurrent modification detected on ${resource.name}. Fetching latest state and retrying...`);
         const freshResource = await fetchResource(projectId, accessToken, resource);
         if (freshResource) {
-            // Retry update with fresh fingerprint, but disable further retries to prevent loops
             return updateResourceLabels(projectId, accessToken, freshResource, newLabels, false);
         }
     }
@@ -567,12 +539,10 @@ export const ensureGovernanceBucket = async (projectId: string, accessToken: str
   const url = `${STORAGE_BASE_URL}/${bucketName}`;
   
   try {
-    // Check existence
     const check = await fetchWithBackoff(url, { headers: { Authorization: `Bearer ${accessToken}` } });
     if (check.ok) return true;
     
     if (check.status === 404) {
-      // Create
       const create = await fetchWithBackoff(`${STORAGE_BASE_URL}?project=${projectId}`, {
         method: 'POST',
         headers: { 
@@ -581,9 +551,8 @@ export const ensureGovernanceBucket = async (projectId: string, accessToken: str
         },
         body: JSON.stringify({
             name: bucketName,
-            location: 'US', // Defaulting to US for simplicity, could be multi-region
+            location: 'US',
             storageClass: 'STANDARD',
-            // Enterprise: Enforce Uniform Access for better security posture
             iamConfiguration: {
                 uniformBucketLevelAccess: { enabled: true }
             }
@@ -593,15 +562,10 @@ export const ensureGovernanceBucket = async (projectId: string, accessToken: str
     }
     return false;
   } catch (e) {
-    console.error("Bucket check failed", e);
     return false;
   }
 };
 
-/**
- * Downloads a file from GCS. 
- * Supports returning generation for optimistic locking.
- */
 export const fetchFileFromGcs = async (
     projectId: string, 
     accessToken: string, 
@@ -622,14 +586,10 @@ export const fetchFileFromGcs = async (
         }
         return null;
     } catch (e) {
-        console.warn(`Failed to fetch ${fileName} from GCS`, e);
         return null;
     }
 };
 
-/**
- * Uploads a file to GCS with Compressed content and Optimistic Locking.
- */
 export const saveFileToGcs = async (
     projectId: string, 
     accessToken: string, 
@@ -640,7 +600,6 @@ export const saveFileToGcs = async (
     const bucketName = `yalla-gov-${projectId}`;
     let url = `https://storage.googleapis.com/upload/storage/v1/b/${bucketName}/o?uploadType=media&name=${fileName}`;
     
-    // Add optimistic locking parameter if provided
     if (ifGenerationMatch) {
         url += `&ifGenerationMatch=${ifGenerationMatch}`;
     }
@@ -650,14 +609,14 @@ export const saveFileToGcs = async (
             method: 'POST',
             headers: { 
                 Authorization: `Bearer ${accessToken}`,
-                'Content-Type': 'application/json', // Stored as blob but semantically JSON
+                'Content-Type': 'application/json', 
             },
-            body: data // Compressed blob
+            body: data 
         });
         
         if (res.ok) {
             const json = await res.json();
-            return json.generation; // Return new generation
+            return json.generation; 
         } else if (res.status === 412) {
             throw new Error("Precondition Failed: The file has been modified by another process.");
         }
@@ -683,7 +642,6 @@ export const fetchGcpAuditLogs = async (
       },
       body: JSON.stringify({
         resourceNames: [`projects/${projectId}`],
-        // Optimization: Fetch only relevant fields to reduce payload size
         filter: `protoPayload.serviceName=("compute.googleapis.com" OR "run.googleapis.com" OR "cloudsql.googleapis.com") AND logName:"projects/${projectId}/logs/cloudaudit.googleapis.com%2Factivity"`,
         orderBy: 'timestamp desc',
         pageSize
@@ -704,7 +662,6 @@ export const fetchGcpAuditLogs = async (
         summary: `${e.protoPayload?.methodName} on ${e.protoPayload?.resourceName}`,
         source: 'GCP',
         status: e.protoPayload?.status,
-        // Added rich metadata extraction
         callerIp: e.protoPayload?.requestMetadata?.callerIp,
         userAgent: e.protoPayload?.requestMetadata?.callerSuppliedUserAgent,
         metadata: e.protoPayload?.request,
@@ -716,7 +673,6 @@ export const fetchGcpAuditLogs = async (
 };
 
 export const fetchQuotas = async (projectId: string, accessToken: string): Promise<QuotaEntry[]> => {
-    // Key metrics we always want to show even if usage is 0
     const ALWAYS_SHOW_METRICS = [
         'CPUS', 'NVIDIA_A100_GPUS', 'NVIDIA_T4_GPUS', 
         'SSD_TOTAL_GB', 'DISKS_TOTAL_GB', 
@@ -739,7 +695,6 @@ export const fetchQuotas = async (projectId: string, accessToken: string): Promi
         if (data.items) {
             data.items.forEach((r: any) => {
                 r.quotas?.forEach((q: any) => {
-                    // Show if limit exists AND (usage > 0 OR it's a key metric)
                     const isKeyMetric = ALWAYS_SHOW_METRICS.includes(q.metric);
                     if(q.limit > 0 && (q.usage > 0 || isKeyMetric)) { 
                         quotas.push({ 

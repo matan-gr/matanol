@@ -145,6 +145,39 @@ const applyOperations = (labels: Record<string, string>, resourceName: string, o
   return currentLabels;
 };
 
+// Helper for consistent colors based on string
+const stringToColor = (str: string) => {
+  const colors = [
+    'bg-blue-500 border-blue-600 text-white',
+    'bg-emerald-500 border-emerald-600 text-white',
+    'bg-violet-500 border-violet-600 text-white',
+    'bg-amber-500 border-amber-600 text-white',
+    'bg-pink-500 border-pink-600 text-white',
+    'bg-cyan-500 border-cyan-600 text-white',
+  ];
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return colors[Math.abs(hash) % colors.length];
+};
+
+const stringToLightColor = (str: string) => {
+    const colors = [
+      'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800',
+      'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800',
+      'bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 border-violet-200 dark:border-violet-800',
+      'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800',
+      'bg-pink-50 dark:bg-pink-900/20 text-pink-700 dark:text-pink-300 border-pink-200 dark:border-pink-800',
+      'bg-cyan-50 dark:bg-cyan-900/20 text-cyan-700 dark:text-cyan-300 border-cyan-200 dark:border-cyan-800',
+    ];
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return colors[Math.abs(hash) % colors.length];
+};
+
 // --- Component ---
 
 export const LabelingStudio: React.FC<LabelingStudioProps> = ({ 
@@ -205,15 +238,21 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
         const result = await analyzeNamingPatterns(names);
 
         if (result.suggestedMode === 'PATTERN' && result.config?.delimiter) {
-            updateConfig(opId, 'delimiter', result.config.delimiter);
-            
-            if (result.config.mappings && Array.isArray(result.config.mappings)) {
-                const mapped = result.config.mappings.map((m: any) => ({
-                    index: m.position,
-                    targetKey: m.key
-                }));
-                updateConfig(opId, 'mappings', mapped);
-            }
+            // Important: We need to use functional updates correctly to ensure latest state
+            setPipeline(prev => prev.map(p => {
+                if (p.id !== opId) return p;
+                
+                const newConfig = { ...p.config, delimiter: result.config.delimiter };
+                
+                if (result.config.mappings && Array.isArray(result.config.mappings)) {
+                    newConfig.mappings = result.config.mappings.map((m: any) => ({
+                        index: m.position,
+                        targetKey: m.key
+                    }));
+                }
+                
+                return { ...p, config: newConfig };
+            }));
         }
     } catch (error) {
         console.error("Auto-detect failed", error);
@@ -371,7 +410,7 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
                                 
                                 <div className="flex-1">
                                     <div className="flex items-center gap-2 mb-1">
-                                        <Badge variant="neutral" className="text-[9px] px-1.5 py-0">
+                                        <Badge variant="neutral" className="text-[9px] px-1.5 py-0.5">
                                             {OP_DESCRIPTIONS[op.type].label}
                                         </Badge>
                                     </div>
@@ -495,39 +534,42 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
                                                  {sampleResource.name.split(op.config.delimiter).map((token, idx) => {
                                                     const mapping = op.config.mappings?.find(m => m.index === idx);
                                                     const assignedKey = mapping?.targetKey || '';
+                                                    const mappedColorClass = assignedKey ? stringToColor(assignedKey) : 'bg-white dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700';
                                                     
                                                     return (
                                                       <div key={idx} className="flex flex-col items-center gap-2 group/token relative">
                                                           {/* Token Bubble */}
-                                                          <div className={`
-                                                             px-3 py-1.5 rounded-md text-xs font-mono font-medium border shadow-sm transition-all z-10 min-w-[40px] text-center
-                                                             ${assignedKey 
-                                                               ? 'bg-blue-500 text-white border-blue-600 shadow-blue-500/20' 
-                                                               : 'bg-white dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700'}
-                                                          `}>
-                                                             {token}
-                                                          </div>
+                                                          <Tooltip content={assignedKey ? `Mapped to: ${assignedKey}` : 'No Mapping'} placement="top">
+                                                            <div className={`
+                                                               px-3 py-1.5 rounded-md text-xs font-mono font-medium border shadow-sm transition-all z-10 min-w-[40px] text-center
+                                                               ${mappedColorClass}
+                                                            `}>
+                                                               {token}
+                                                            </div>
+                                                          </Tooltip>
                                                           
                                                           {/* Visual Connector */}
-                                                          <div className={`h-4 w-px transition-colors ${assignedKey ? 'bg-blue-400' : 'bg-slate-300 dark:bg-slate-700'}`}></div>
+                                                          <div className={`h-4 w-px transition-colors ${assignedKey ? 'bg-indigo-400' : 'bg-slate-300 dark:bg-slate-700'}`}></div>
                                                           
                                                           {/* Input */}
-                                                          <Input 
-                                                            placeholder={`Key...`} 
-                                                            value={assignedKey}
-                                                            className={`
-                                                                h-7 text-[10px] text-center px-1 w-24 shadow-sm transition-all font-mono
-                                                                ${assignedKey 
-                                                                    ? 'border-blue-400 focus:border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-bold' 
-                                                                    : 'text-slate-400 border-slate-200 dark:border-slate-700 opacity-70 focus:opacity-100'}
-                                                            `}
-                                                            onChange={(e) => {
-                                                               const val = e.target.value;
-                                                               const newMappings = op.config.mappings?.filter(m => m.index !== idx) || [];
-                                                               if (val) newMappings.push({ index: idx, targetKey: val });
-                                                               updateConfig(op.id, 'mappings', newMappings);
-                                                            }}
-                                                          />
+                                                          <div className="relative">
+                                                            <Input 
+                                                                placeholder={`Key...`} 
+                                                                value={assignedKey}
+                                                                className={`
+                                                                    h-7 text-[10px] text-center px-1 w-24 shadow-sm transition-all font-mono
+                                                                    ${assignedKey 
+                                                                        ? stringToLightColor(assignedKey) + ' font-bold'
+                                                                        : 'text-slate-400 border-slate-200 dark:border-slate-700 opacity-70 focus:opacity-100'}
+                                                                `}
+                                                                onChange={(e) => {
+                                                                const val = e.target.value;
+                                                                const newMappings = op.config.mappings?.filter(m => m.index !== idx) || [];
+                                                                if (val) newMappings.push({ index: idx, targetKey: val });
+                                                                updateConfig(op.id, 'mappings', newMappings);
+                                                                }}
+                                                            />
+                                                          </div>
                                                           
                                                           {/* Position Label */}
                                                           <span className="text-[9px] text-slate-300 dark:text-slate-600 absolute -top-3">#{idx}</span>

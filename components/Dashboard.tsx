@@ -15,19 +15,29 @@ import { DonutChart, AnimatedCounter } from './Visualizations';
 import { useDashboardAnalytics } from '../hooks/useDashboardAnalytics';
 import { RegionIcon } from './RegionIcon';
 import { motion, AnimatePresence, Variants } from 'framer-motion';
-import { generateDashboardBrief } from '../services/geminiService';
 import { MarkdownView } from './MarkdownView';
 
 interface DashboardProps {
   resources: GceResource[];
   stats: { total: number; labeled: number; unlabeled: number };
   onNavigate: (tab: string) => void;
+  // AI Consultant Props
+  aiInsight: string | null;
+  isGeneratingInsight: boolean;
+  onGenerateInsight: (metrics: any) => void;
+  onClearInsight: () => void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ resources, stats, onNavigate }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ 
+    resources, 
+    stats, 
+    onNavigate,
+    aiInsight,
+    isGeneratingInsight,
+    onGenerateInsight,
+    onClearInsight
+}) => {
   const analysis = useDashboardAnalytics(resources, stats);
-  const [aiInsight, setAiInsight] = useState<string | null>(null);
-  const [isGeneratingInsight, setIsGeneratingInsight] = useState(false);
 
   // --- Derived Metrics ---
   const potentialSavings = useMemo(() => {
@@ -53,28 +63,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ resources, stats, onNaviga
   ].filter(x => x.value > 0).sort((a, b) => b.value - a.value), [analysis]);
 
   const handleGenerateInsights = async () => {
-     setIsGeneratingInsight(true);
-     try {
-        if (window.aistudio) {
-            const hasKey = await window.aistudio.hasSelectedApiKey();
-            if(!hasKey) await window.aistudio.openSelectKey();
-        }
-        
-        const brief = await generateDashboardBrief({
-           stoppedCount: analysis.stoppedInstances.length,
-           stoppedDiskGb: potentialSavings.wastedGb,
-           publicIpCount: analysis.publicIpCount,
-           unlabeledCount: stats.unlabeled,
-           totalDiskGb: analysis.totalDiskGb,
-           totalResources: stats.total,
-           estimatedMonthlyWaste: potentialSavings.monthly
-        });
-        setAiInsight(brief);
-     } catch (e) {
-        console.error("Failed to gen insights", e);
-     } finally {
-        setIsGeneratingInsight(false);
-     }
+     onGenerateInsight({
+        stoppedCount: analysis.stoppedInstances.length,
+        stoppedDiskGb: potentialSavings.wastedGb,
+        publicIpCount: analysis.publicIpCount,
+        unlabeledCount: stats.unlabeled,
+        totalDiskGb: analysis.totalDiskGb,
+        totalResources: stats.total,
+        estimatedMonthlyWaste: potentialSavings.monthly
+     });
   };
 
   // --- Animation Variants ---
@@ -294,7 +291,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ resources, stats, onNaviga
                               <span className="text-xs font-mono text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
                                  <CheckCircle2 className="w-3 h-3" /> Analysis Complete
                               </span>
-                              <button onClick={() => setAiInsight(null)} className="text-xs text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors">Clear</button>
+                              <button onClick={onClearInsight} className="text-xs text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors">Clear</button>
                            </div>
                            <MarkdownView content={aiInsight} />
                            <div className="mt-6 flex justify-end">

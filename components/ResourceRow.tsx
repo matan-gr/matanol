@@ -13,6 +13,7 @@ import {
 import { Button, Input, Select, Badge, Tooltip, Spinner } from './DesignSystem';
 import { validateKey, validateValue } from '../utils/validation';
 import { RegionIcon } from './RegionIcon';
+import { ServiceIcon } from './ServiceIcons';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface ResourceRowProps {
@@ -38,6 +39,7 @@ export const ResourceRow = React.memo(({
   const [isExpanded, setIsExpanded] = useState(false);
   const [editForm, setEditForm] = useState<{key: string, value: string}[]>([]);
   const [copiedId, setCopiedId] = useState(false);
+  const [focusedIdx, setFocusedIdx] = useState<number | null>(null);
   const dragItem = useRef<number | null>(null);
   const dragOverItem = useRef<number | null>(null);
 
@@ -124,37 +126,6 @@ export const ResourceRow = React.memo(({
     
     dragItem.current = null;
     dragOverItem.current = null;
-  };
-
-  // Icons & Colors
-  const getIcon = () => {
-      switch(resource.type) {
-          case 'INSTANCE': return Server;
-          case 'DISK': return HardDrive;
-          case 'IMAGE': return ImageIcon;
-          case 'SNAPSHOT': return Camera;
-          case 'CLOUD_RUN': return Cloud;
-          case 'CLOUD_SQL': return Database;
-          case 'BUCKET': return Box;
-          case 'GKE_CLUSTER': return Ship;
-          default: return Server;
-      }
-  };
-  const Icon = getIcon();
-  
-  // Use richer colors in light mode for "Tech Fresh" look
-  const getIconColorClass = () => {
-      switch(resource.type) {
-          case 'INSTANCE': return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border-blue-200 dark:border-blue-800';
-          case 'DISK': return 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 border-purple-200 dark:border-purple-800';
-          case 'IMAGE': return 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300 border-pink-200 dark:border-pink-800';
-          case 'SNAPSHOT': return 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300 border-cyan-200 dark:border-cyan-800';
-          case 'CLOUD_RUN': return 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800';
-          case 'CLOUD_SQL': return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300 border-orange-200 dark:border-orange-800';
-          case 'BUCKET': return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800';
-          case 'GKE_CLUSTER': return 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300 border-sky-200 dark:border-sky-800';
-          default: return 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-400 border-slate-300 dark:border-slate-700';
-      }
   };
 
   const statusColor = resource.status === 'RUNNING' || resource.status === 'READY' || resource.status === 'RUNNABLE'
@@ -408,10 +379,12 @@ export const ResourceRow = React.memo(({
         <td className={commonTdClasses}>
           <div className="flex flex-col gap-2">
              <div className="flex items-center gap-4">
-                {/* Distinct Icon Next to Name */}
-                <div className={`p-2.5 rounded-xl shrink-0 border ${getIconColorClass()}`}>
-                   <Icon className="w-5 h-5" />
-                </div>
+                {/* Official GCP Service Icon */}
+                <Tooltip content={resource.type.replace('_', ' ')} placement="right">
+                  <div className="p-2 shrink-0 bg-transparent">
+                     <ServiceIcon type={resource.type} className="w-8 h-8 drop-shadow-sm" />
+                  </div>
+                </Tooltip>
                 <div className="flex-1 min-w-0">
                     <span className="font-bold text-slate-800 dark:text-white truncate text-[15px] leading-tight block" title={resource.name}>
                       {resource.name}
@@ -509,8 +482,13 @@ export const ResourceRow = React.memo(({
                    <button onClick={() => setIsEditing(false)} className="text-slate-400 hover:text-slate-700 dark:hover:text-white"><X className="w-4 h-4"/></button>
                 </div>
                 
-                <div className="space-y-2 max-h-[240px] overflow-y-auto pr-1 custom-scrollbar">
-                   {editForm.map((item, idx) => (
+                <div className="space-y-2 max-h-[240px] overflow-y-visible pr-1 custom-scrollbar">
+                   {editForm.map((item, idx) => {
+                      const suggestions = focusedIdx === idx && item.key.length > 0 
+                        ? LABEL_TEMPLATES.filter(t => t.key.toLowerCase().includes(item.key.toLowerCase()) && t.key !== item.key).slice(0, 5) 
+                        : [];
+
+                      return (
                       <div 
                         key={idx} 
                         className="flex gap-2 items-center group/item transition-transform duration-200 ease-out"
@@ -523,21 +501,55 @@ export const ResourceRow = React.memo(({
                          <div className="cursor-move text-slate-300 hover:text-slate-500">
                             <GripVertical className="w-3.5 h-3.5" />
                          </div>
-                         <Input 
-                            value={item.key} 
-                            placeholder="Key" 
-                            className="h-8 text-xs py-1 font-mono"
-                            onChange={e => { const n = [...editForm]; n[idx].key = e.target.value; setEditForm(n); }}
-                            error={validateKey(item.key) || undefined}
-                         />
+                         <div className="relative flex-1">
+                            <Input 
+                                value={item.key} 
+                                placeholder="Key" 
+                                className="h-8 text-xs py-1 font-mono"
+                                onChange={e => { const n = [...editForm]; n[idx].key = e.target.value; setEditForm(n); }}
+                                onFocus={() => setFocusedIdx(idx)}
+                                onBlur={() => setTimeout(() => setFocusedIdx(null), 200)}
+                                error={validateKey(item.key) || undefined}
+                            />
+                            <AnimatePresence>
+                                {suggestions.length > 0 && (
+                                    <motion.div 
+                                        initial={{ opacity: 0, y: -5 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        exit={{ opacity: 0, y: -5 }}
+                                        className="absolute left-0 top-full mt-1 w-[200px] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md shadow-xl z-50 overflow-hidden"
+                                    >
+                                        {suggestions.map(s => (
+                                            <button
+                                                key={`${s.key}-${s.value}`}
+                                                className="w-full text-left px-3 py-2 text-xs hover:bg-indigo-50 dark:hover:bg-slate-700 transition-colors flex flex-col border-b last:border-0 border-slate-100 dark:border-slate-700/50"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    const n = [...editForm];
+                                                    n[idx].key = s.key;
+                                                    n[idx].value = s.value;
+                                                    setEditForm(n);
+                                                    setFocusedIdx(null);
+                                                }}
+                                            >
+                                                <span className="font-bold text-slate-700 dark:text-slate-200">{s.key}</span>
+                                                <span className="text-[10px] text-slate-500">{s.value}</span>
+                                            </button>
+                                        ))}
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+                         </div>
                          <span className="text-slate-300">:</span>
-                         <Input 
-                            value={item.value} 
-                            placeholder="Value" 
-                            className="h-8 text-xs py-1 font-mono"
-                            onChange={e => { const n = [...editForm]; n[idx].value = e.target.value; setEditForm(n); }}
-                            error={validateValue(item.value) || undefined}
-                         />
+                         <div className="flex-1">
+                            <Input 
+                                value={item.value} 
+                                placeholder="Value" 
+                                className="h-8 text-xs py-1 font-mono"
+                                onChange={e => { const n = [...editForm]; n[idx].value = e.target.value; setEditForm(n); }}
+                                error={validateValue(item.value) || undefined}
+                            />
+                         </div>
                          <button 
                             onClick={() => setEditForm(prev => prev.filter((_, i) => i !== idx))}
                             className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
@@ -545,7 +557,7 @@ export const ResourceRow = React.memo(({
                             <Trash2 className="w-3.5 h-3.5" />
                          </button>
                       </div>
-                   ))}
+                   )})}
                    {editForm.length === 0 && <div className="text-xs text-slate-400 italic text-center py-2">No labels assigned</div>}
                 </div>
                 

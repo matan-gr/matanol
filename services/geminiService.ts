@@ -210,14 +210,15 @@ export const analyzeNamingPatterns = async (
     Your task is to identify the naming convention and configuration for a labeling parser.
 
     1. **Delimiter Detection**: 
-       Check if the names use a consistent separator character (e.g., hyphen '-', underscore '_', dot '.', slash '/').
-       If a common delimiter is found, set 'suggestedMode' to 'PATTERN' and return the 'delimiter' character in the config.
+       Check if the names use a consistent separator character. The most common are hyphen '-', underscore '_', dot '.', slash '/'.
+       Return the delimiter that splits the name into the most meaningful parts (e.g. "prod-web-01" -> "-" splits into ["prod", "web", "01"]).
+       If found, set 'suggestedMode' to 'PATTERN' and 'delimiter' in config.
 
     2. **Complex Patterns**:
        If names are mixed case (e.g., "prodWeb01") or lack separators, set 'suggestedMode' to 'REGEX' and provide a regex pattern.
 
     3. **Mappings**:
-       Suggest logical mappings for the parts (e.g., position 0 is 'env', position 1 is 'app').
+       Suggest logical mappings for the parts (e.g., position 0 is 'env', position 1 is 'app'). Use standard keys like 'environment', 'app', 'role', 'region', 'cluster' where applicable.
 
     Return JSON.
   `;

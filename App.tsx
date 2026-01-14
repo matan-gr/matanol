@@ -80,6 +80,12 @@ export const App = () => {
     isAnalysing, 
     savedViews,
     appSettings,
+    // AI Consultant Props
+    dashboardInsight,
+    isGeneratingDashboardInsight,
+    generateDashboardInsight,
+    clearDashboardInsight,
+    // ---
     connectProject, 
     loadDemoData, 
     analyzeResources, 
@@ -289,7 +295,15 @@ export const App = () => {
         <AnimatePresence mode="wait">
           {activeTab === 'dashboard' && (
             <PageTransition key="dashboard">
-              <Dashboard resources={resources} stats={stats} onNavigate={setActiveTab} />
+              <Dashboard 
+                resources={resources} 
+                stats={stats} 
+                onNavigate={setActiveTab} 
+                aiInsight={dashboardInsight}
+                isGeneratingInsight={isGeneratingDashboardInsight}
+                onGenerateInsight={generateDashboardInsight}
+                onClearInsight={clearDashboardInsight}
+              />
             </PageTransition>
           )}
 
