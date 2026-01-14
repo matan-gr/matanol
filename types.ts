@@ -45,8 +45,8 @@ export interface ResourceIP {
 }
 
 // --- Governance Types ---
-export type PolicySeverity = 'CRITICAL' | 'WARNING' | 'INFO';
-export type PolicyCategory = 'COST' | 'SECURITY' | 'OPERATIONS';
+export type PolicySeverity = 'CRITICAL' | 'MEDIUM' | 'WARNING' | 'INFO';
+export type PolicyCategory = string; // Allows custom categories
 export type RuleType = 'REQUIRED_LABEL' | 'ALLOWED_VALUES' | 'NAME_REGEX' | 'REGION_RESTRICTION' | 'CUSTOM';
 
 export interface PolicyRuleConfig {
@@ -149,6 +149,36 @@ export interface GceResource {
   // New Governance Field
   violations?: PolicyViolation[];
 }
+
+// --- Time Machine Types ---
+export interface ResourceSnapshot {
+  id: string;
+  name: string;
+  type: ResourceType;
+  status: string;
+  zone: string;
+  labelHash: string; // To detect modifications cheaply
+  meta: any; // Tiny critical metadata (size, machineType)
+}
+
+export interface TimelineEntry {
+  date: string; // ISO Date "YYYY-MM-DD"
+  timestamp: number;
+  resources: ResourceSnapshot[];
+}
+
+export type DiffType = 'ADDED' | 'REMOVED' | 'MODIFIED' | 'UNCHANGED';
+
+export interface DiffResult {
+  id: string;
+  name: string;
+  type: ResourceType;
+  changeType: DiffType;
+  details: string;
+  past?: ResourceSnapshot;
+  present?: GceResource;
+}
+// --------------------------
 
 export interface LogEntry {
   id: string;

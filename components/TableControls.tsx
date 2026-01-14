@@ -7,7 +7,7 @@ import {
   Server, Database, Cloud, 
   HardDrive, Image as ImageIcon, Camera, Box,
   Bookmark, SlidersHorizontal, Trash2, Ship,
-  Wand2, ChevronLeft, ChevronRight
+  Wand2, ChevronLeft, ChevronRight, Code, FileText, ChevronDown
 } from 'lucide-react';
 import { Button, Input, MultiSelect, ToggleSwitch, Select, Badge } from './DesignSystem';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -18,6 +18,7 @@ export interface ResourceFiltersProps {
   onChange: (config: FilterConfig) => void;
   show: boolean;
   onDownload: () => void;
+  onExportTerraform: () => void; // New Prop
   onToggleShow: () => void;
   onSaveView: (name: string) => void;
   savedViews?: SavedView[]; 
@@ -50,19 +51,24 @@ const RESOURCE_TYPES = [
 ];
 
 export const ResourceFilters = React.memo(({ 
-  config, onChange, show, onDownload, onToggleShow, onSaveView, savedViews = [], onLoadView, onDeleteView,
+  config, onChange, show, onDownload, onExportTerraform, onToggleShow, onSaveView, savedViews = [], onLoadView, onDeleteView,
   availableZones, availableMachineTypes, availableLabelKeys,
   groupBy, onGroupByChange,
   counts, onRefresh, isRefreshing
 }: ResourceFiltersProps) => {
   const [viewName, setViewName] = useState('');
   const [isViewsOpen, setIsViewsOpen] = useState(false);
+  const [isExportOpen, setIsExportOpen] = useState(false); // Export Menu State
   const viewsRef = useRef<HTMLDivElement>(null);
+  const exportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (viewsRef.current && !viewsRef.current.contains(event.target as Node)) {
         setIsViewsOpen(false);
+      }
+      if (exportRef.current && !exportRef.current.contains(event.target as Node)) {
+        setIsExportOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -100,7 +106,6 @@ export const ResourceFilters = React.memo(({
       let count = 0;
       if (config.search) count++;
       count += config.statuses.length;
-      // count += config.types.length; // Exclude types from the "Filters" button count since they are visible
       count += config.zones.length;
       count += config.machineTypes.length;
       if (config.hasPublicIp !== null) count++;
@@ -218,7 +223,30 @@ export const ResourceFilters = React.memo(({
                 </AnimatePresence>
             </div>
 
-            <Button variant="outline" size="md" onClick={onDownload} leftIcon={<Download className="w-4 h-4"/>}>Export</Button>
+            {/* Export Dropdown */}
+            <div className="relative" ref={exportRef}>
+                <Button variant="outline" size="md" onClick={() => setIsExportOpen(!isExportOpen)} rightIcon={<ChevronDown className="w-3 h-3"/>} leftIcon={<Download className="w-4 h-4"/>}>
+                    Export
+                </Button>
+                <AnimatePresence>
+                    {isExportOpen && (
+                        <motion.div 
+                            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                            className="absolute right-0 mt-2 w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-slate-200 dark:border-slate-800 z-50 overflow-hidden p-1"
+                        >
+                            <button onClick={() => { onDownload(); setIsExportOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg text-left">
+                                <FileText className="w-4 h-4 text-emerald-500" /> Download CSV
+                            </button>
+                            <button onClick={() => { onExportTerraform(); setIsExportOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg text-left">
+                                <Code className="w-4 h-4 text-indigo-500" /> Export Terraform
+                            </button>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+            </div>
+
             <Button 
               variant="primary" 
               size="md" 

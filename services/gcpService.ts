@@ -83,6 +83,7 @@ const parseGcpError = async (response: Response): Promise<string> => {
       if (code === 403) return `Access Denied: ${mainMsg}`;
       if (code === 401) return `Session Expired`;
       if (code === 429) return `Rate Limit Exceeded`;
+      if (code === 412) return `Precondition Failed`;
       
       return mainMsg || response.statusText;
     }
@@ -92,7 +93,7 @@ const parseGcpError = async (response: Response): Promise<string> => {
   }
 };
 
-const fetchWithBackoff = async (
+export const fetchWithBackoff = async (
   url: string, 
   options: RequestInit, 
   retries = 3, 
@@ -445,11 +446,49 @@ export const fetchAllResources = async (
   if (authFailure) throw new Error("Authentication Failed (401)");
 };
 
+export const fetchResource = async (projectId: string, accessToken: string, resource: GceResource): Promise<GceResource | null> => {
+  let url = '';
+  
+  if (resource.type === 'INSTANCE') {
+    url = `${BASE_URL}/${projectId}/zones/${resource.zone}/instances/${resource.name}`;
+  } else if (resource.type === 'DISK') {
+    url = `${BASE_URL}/${projectId}/zones/${resource.zone}/disks/${resource.name}`;
+  } else if (resource.type === 'BUCKET') {
+    url = `${STORAGE_BASE_URL}/${resource.name}`;
+  } else if (resource.type === 'CLOUD_RUN') {
+    url = `https://run.googleapis.com/v2/projects/${projectId}/locations/${resource.zone}/services/${resource.name}`;
+  } else if (resource.type === 'CLOUD_SQL') {
+    url = `${SQL_ADMIN_URL}/${projectId}/instances/${resource.name}`;
+  } else if (resource.type === 'GKE_CLUSTER') {
+    url = `${CONTAINER_BASE_URL}/${projectId}/locations/${resource.zone}/clusters/${resource.name}`;
+  } else {
+      return null;
+  }
+
+  try {
+      const response = await apiLimiter.add(() => fetchWithBackoff(url, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+      }));
+      if (!response.ok) return null;
+      const data = await response.json();
+      
+      // We return the original resource with updated critical fields
+      // Important: Map different API eTag/fingerprint fields to our internal model
+      return {
+          ...resource,
+          labelFingerprint: data.labelFingerprint || data.etag || ''
+      };
+  } catch (e) {
+      return null;
+  }
+};
+
 export const updateResourceLabels = async (
   projectId: string,
   accessToken: string,
   resource: GceResource,
-  newLabels: Record<string, string>
+  newLabels: Record<string, string>,
+  retryOn412 = true
 ) => {
   let url = '';
   let method = 'POST';
@@ -495,7 +534,7 @@ export const updateResourceLabels = async (
     throw new Error(`Updating labels for type ${resource.type} not supported yet.`);
   }
   
-  // Rate limited update
+  // Rate limited update with backoff
   const response = await apiLimiter.add(() => fetchWithBackoff(url, {
     method: method,
     headers: {
@@ -506,48 +545,21 @@ export const updateResourceLabels = async (
   }));
 
    if (!response.ok) {
+    // Atomic Recovery: If 412 (Precondition Failed), fetch latest fingerprint and retry once
+    if (response.status === 412 && retryOn412) {
+        console.warn(`Concurrent modification detected on ${resource.name}. Fetching latest state and retrying...`);
+        const freshResource = await fetchResource(projectId, accessToken, resource);
+        if (freshResource) {
+            // Retry update with fresh fingerprint, but disable further retries to prevent loops
+            return updateResourceLabels(projectId, accessToken, freshResource, newLabels, false);
+        }
+    }
+
     const errorMessage = await parseGcpError(response);
     throw new Error(errorMessage);
   }
   
   return response.json();
-};
-
-export const fetchResource = async (projectId: string, accessToken: string, resource: GceResource): Promise<GceResource | null> => {
-  let url = '';
-  // Used for fetching latest state (e.g., fingerprint) for rollback
-  
-  if (resource.type === 'INSTANCE') {
-    url = `${BASE_URL}/${projectId}/zones/${resource.zone}/instances/${resource.name}`;
-  } else if (resource.type === 'DISK') {
-    url = `${BASE_URL}/${projectId}/zones/${resource.zone}/disks/${resource.name}`;
-  } else if (resource.type === 'BUCKET') {
-    url = `${STORAGE_BASE_URL}/${resource.name}`;
-  } else if (resource.type === 'CLOUD_RUN') {
-    url = `https://run.googleapis.com/v2/projects/${projectId}/locations/${resource.zone}/services/${resource.name}`;
-  } else if (resource.type === 'CLOUD_SQL') {
-    url = `${SQL_ADMIN_URL}/${projectId}/instances/${resource.name}`;
-  } else if (resource.type === 'GKE_CLUSTER') {
-    url = `${CONTAINER_BASE_URL}/${projectId}/locations/${resource.zone}/clusters/${resource.name}`;
-  } else {
-      return null;
-  }
-
-  try {
-      const response = await apiLimiter.add(() => fetchWithBackoff(url, {
-          headers: { Authorization: `Bearer ${accessToken}` }
-      }));
-      if (!response.ok) return null;
-      const data = await response.json();
-      
-      // We return the original resource with updated critical fields
-      return {
-          ...resource,
-          labelFingerprint: data.labelFingerprint || data.etag || ''
-      };
-  } catch (e) {
-      return null;
-  }
 };
 
 export const ensureGovernanceBucket = async (projectId: string, accessToken: string): Promise<boolean> => {
@@ -570,7 +582,11 @@ export const ensureGovernanceBucket = async (projectId: string, accessToken: str
         body: JSON.stringify({
             name: bucketName,
             location: 'US', // Defaulting to US for simplicity, could be multi-region
-            storageClass: 'STANDARD'
+            storageClass: 'STANDARD',
+            // Enterprise: Enforce Uniform Access for better security posture
+            iamConfiguration: {
+                uniformBucketLevelAccess: { enabled: true }
+            }
         })
       });
       return create.ok;
@@ -582,34 +598,74 @@ export const ensureGovernanceBucket = async (projectId: string, accessToken: str
   }
 };
 
-export const fetchHistoryFromGcs = async (projectId: string, accessToken: string): Promise<any> => {
+/**
+ * Downloads a file from GCS. 
+ * Supports returning generation for optimistic locking.
+ */
+export const fetchFileFromGcs = async (
+    projectId: string, 
+    accessToken: string, 
+    fileName: string
+): Promise<{ blob: Blob, generation: string } | null> => {
     const bucketName = `yalla-gov-${projectId}`;
-    const url = `${STORAGE_BASE_URL}/${bucketName}/o/history.json?alt=media`;
+    const url = `${STORAGE_BASE_URL}/${bucketName}/o/${fileName}?alt=media`;
     
     try {
-        const res = await fetchWithBackoff(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-        if (res.ok) return await res.json();
+        const res = await fetchWithBackoff(url, { 
+            headers: { Authorization: `Bearer ${accessToken}` } 
+        });
+        
+        if (res.ok) {
+            const blob = await res.blob();
+            const generation = res.headers.get('x-goog-generation') || '0';
+            return { blob, generation };
+        }
         return null;
     } catch (e) {
+        console.warn(`Failed to fetch ${fileName} from GCS`, e);
         return null;
     }
 };
 
-export const saveHistoryToGcs = async (projectId: string, accessToken: string, data: any): Promise<void> => {
+/**
+ * Uploads a file to GCS with Compressed content and Optimistic Locking.
+ */
+export const saveFileToGcs = async (
+    projectId: string, 
+    accessToken: string, 
+    fileName: string, 
+    data: Blob,
+    ifGenerationMatch?: string
+): Promise<string | null> => {
     const bucketName = `yalla-gov-${projectId}`;
-    const url = `https://storage.googleapis.com/upload/storage/v1/b/${bucketName}/o?uploadType=media&name=history.json`;
+    let url = `https://storage.googleapis.com/upload/storage/v1/b/${bucketName}/o?uploadType=media&name=${fileName}`;
     
+    // Add optimistic locking parameter if provided
+    if (ifGenerationMatch) {
+        url += `&ifGenerationMatch=${ifGenerationMatch}`;
+    }
+
     try {
-        await fetchWithBackoff(url, {
+        const res = await fetchWithBackoff(url, {
             method: 'POST',
             headers: { 
                 Authorization: `Bearer ${accessToken}`,
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json', // Stored as blob but semantically JSON
             },
-            body: JSON.stringify(data)
+            body: data // Compressed blob
         });
+        
+        if (res.ok) {
+            const json = await res.json();
+            return json.generation; // Return new generation
+        } else if (res.status === 412) {
+            throw new Error("Precondition Failed: The file has been modified by another process.");
+        }
+        
+        return null;
     } catch (e) {
-        console.error("Failed to save history to GCS", e);
+        console.error(`Failed to save ${fileName} to GCS`, e);
+        throw e;
     }
 };
 
@@ -694,7 +750,7 @@ export const fetchQuotas = async (projectId: string, accessToken: string): Promi
                             percentage: (q.usage/q.limit)*100 
                         });
                     }
-                })
+                });
             });
         }
         return quotas;
@@ -702,4 +758,4 @@ export const fetchQuotas = async (projectId: string, accessToken: string): Promi
         console.error("Quota fetch error", e);
         return []; 
     }
-}
+};

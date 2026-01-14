@@ -342,8 +342,26 @@ export const SectionHeader = ({ title, subtitle, action }: { title: string, subt
   </div>
 );
 
-export const Modal: React.FC<{ isOpen: boolean; onClose: () => void; title: string; children: React.ReactNode }> = ({ isOpen, onClose, title, children }) => {
+export const Modal: React.FC<{ 
+  isOpen: boolean; 
+  onClose: () => void; 
+  title: string; 
+  children: React.ReactNode;
+  size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '3xl' | '4xl' | 'full'; 
+  noPadding?: boolean;
+}> = ({ isOpen, onClose, title, children, size = 'md', noPadding = false }) => {
   if (!isOpen) return null;
+
+  const sizeClasses = {
+    'sm': 'max-w-md',
+    'md': 'max-w-2xl',
+    'lg': 'max-w-4xl',
+    'xl': 'max-w-5xl',
+    '2xl': 'max-w-6xl',
+    '3xl': 'max-w-7xl',
+    '4xl': 'max-w-[90vw]',
+    'full': 'max-w-[95vw] h-[95vh]',
+  }[size];
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -361,15 +379,15 @@ export const Modal: React.FC<{ isOpen: boolean; onClose: () => void; title: stri
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 20 }}
-        className="relative bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col border border-slate-200 dark:border-slate-800 overflow-hidden ring-1 ring-slate-900/5"
+        className={`relative bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full ${sizeClasses} max-h-[85vh] flex flex-col border border-slate-200 dark:border-slate-800 overflow-hidden ring-1 ring-slate-900/5`}
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/50 backdrop-blur-md">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/50 backdrop-blur-md shrink-0">
           <h3 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight">{title}</h3>
           <button onClick={onClose} className="p-1.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto p-6 scroll-smooth bg-white dark:bg-slate-900">
+        <div className={`flex-1 overflow-y-auto ${noPadding ? 'p-0' : 'p-6'} scroll-smooth bg-white dark:bg-slate-900`}>
           {children}
         </div>
       </motion.div>

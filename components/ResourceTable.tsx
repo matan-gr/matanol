@@ -10,6 +10,7 @@ import { ResourceRow } from './ResourceRow';
 import { ResourceFilters, BulkActionBar, PaginationControl } from './TableControls';
 import { AuditHistoryModal } from './AuditHistoryModal';
 import { LabelingStudio } from './LabelingStudio';
+import { TerraformExportModal } from './TerraformExportModal';
 import { useResourceFilter, calculateFacetedCounts, SortConfig } from '../hooks/useResourceFilter';
 import { TableRowSkeleton } from './Skeletons';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -73,6 +74,7 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [historyResource, setHistoryResource] = useState<GceResource | null>(null);
   const [isLabelingStudioOpen, setIsLabelingStudioOpen] = useState(false);
+  const [isTerraformModalOpen, setIsTerraformModalOpen] = useState(false);
   
   const [groupByLabel, setGroupByLabel] = useState<string>('');
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
@@ -130,16 +132,6 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
           else next.add(groupKey);
           return next;
       });
-  };
-
-  const handleSort = (key: string) => {
-    setSortConfig(current => {
-      if (current?.key === key) {
-        if (current.direction === 'asc') return { key, direction: 'desc' };
-        return null;
-      }
-      return { key, direction: 'asc' };
-    });
   };
 
   const toggleSelectAll = useCallback(() => {
@@ -238,6 +230,9 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
     resources.filter(r => selectedIds.has(r.id)), 
   [resources, selectedIds]);
 
+  // Use selected resources if any, otherwise all filtered resources for export
+  const exportResourcesList = selectedResourcesList.length > 0 ? selectedResourcesList : filteredResources;
+
   return (
     <div className="flex flex-col relative h-auto">
        {/* Filters Container - Sticky z-50 to stay on top */}
@@ -247,6 +242,7 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
               onChange={onFilterChange} 
               show={showFilters} 
               onDownload={downloadCSV}
+              onExportTerraform={() => setIsTerraformModalOpen(true)}
               onToggleShow={() => setShowFilters(!showFilters)}
               onSaveView={onSaveView}
               savedViews={savedViews}
@@ -292,14 +288,17 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
           onApply={executeBulkStudioUpdates}
        />
 
+       <TerraformExportModal 
+          isOpen={isTerraformModalOpen}
+          onClose={() => setIsTerraformModalOpen(false)}
+          resources={exportResourcesList}
+          projectId={localStorage.getItem('lastProjectId') || 'default-project'}
+       />
+
        <div className="relative min-h-[400px]">
           {/* Responsive Table Wrapper */}
           <div className="overflow-x-auto w-full pb-4">
             <table className="w-full text-left text-sm border-separate border-spacing-y-4 min-w-[1000px]">
-               {/* 
-                  NOTE: Table header removed per user request to fix layout issues.
-                  Sorting is currently unavailable via UI. 
-               */}
                <tbody>
                  {/* Show skeletons only if we have NO resources yet and are loading */}
                  {isLoading && resources.length === 0 && Array.from({ length: 5 }).map((_, i) => <TableRowSkeleton key={i} />)}

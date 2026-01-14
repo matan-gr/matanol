@@ -1,13 +1,14 @@
 
-import { FileText, Server, Activity, Settings, Network, Gauge, ShieldCheck } from 'lucide-react';
+import { FileText, Server, Activity, Settings, Network, Gauge, ShieldCheck, History } from 'lucide-react';
 
 export const APP_NAME = "Yalla Label";
-export const APP_VERSION = "4.2.0-yalla";
+export const APP_VERSION = "4.3.0-timemachine";
 
 export const NAVIGATION_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
   { id: 'inventory', label: 'Resource Inventory', icon: Server },
-  { id: 'policy', label: 'Governance Policy', icon: ShieldCheck }, // New
+  { id: 'policy', label: 'Governance Center', icon: ShieldCheck },
+  { id: 'timemachine', label: 'Time Machine', icon: History },
   { id: 'topology', label: 'Topology Map', icon: Network },
   { id: 'quotas', label: 'Quotas & Limits', icon: Gauge },
   { id: 'logs', label: 'Audit Logs', icon: FileText },

@@ -11,7 +11,7 @@
 
 const DB_NAME = 'YallaLabel_ConfigDB';
 const STORE_NAME = 'user_configs';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // Bumped version
 
 class ConfigStorage {
   private dbPromise: Promise<IDBDatabase> | null = null;
@@ -20,6 +20,12 @@ class ConfigStorage {
     if (this.dbPromise) return this.dbPromise;
 
     this.dbPromise = new Promise((resolve, reject) => {
+      // Basic support check
+      if (!window.indexedDB) {
+          reject(new Error("IndexedDB not supported"));
+          return;
+      }
+
       const request = indexedDB.open(DB_NAME, DB_VERSION);
 
       request.onupgradeneeded = (event) => {
@@ -60,7 +66,7 @@ class ConfigStorage {
         request.onerror = () => reject(request.error);
       });
     } catch (e) {
-      console.warn('Storage write failed', e);
+      console.warn('Storage write failed (Quotas/Permissions)', e);
     }
   }
 

@@ -4,7 +4,7 @@ import { GovernancePolicy, TaxonomyRule, GceResource, PolicyCategory, PolicySeve
 import { 
   ShieldCheck, ShieldAlert, AlertTriangle, BookOpen, 
   Plus, Trash2, Edit3, Save, X, Lightbulb, Check, Info, ArrowRight,
-  PieChart, DollarSign, Lock, Activity, Eye, Filter, Settings
+  PieChart, DollarSign, Lock, Activity, Eye, Filter, Settings, Layers, Box
 } from 'lucide-react';
 import { Card, ToggleSwitch, Button, Input, Badge, Select, Modal } from './DesignSystem';
 import { getPolicies, DEFAULT_TAXONOMY, createCustomPolicy } from '../services/policyService';
@@ -21,16 +21,19 @@ const PolicyEditorModal = ({
     isOpen, 
     onClose, 
     onSave, 
-    initialPolicy 
+    initialPolicy,
+    availableCategories 
 }: { 
     isOpen: boolean, 
     onClose: () => void, 
     onSave: (p: GovernancePolicy) => void,
-    initialPolicy?: GovernancePolicy
+    initialPolicy?: GovernancePolicy,
+    availableCategories: string[]
 }) => {
     const [name, setName] = useState(initialPolicy?.name || '');
     const [description, setDescription] = useState(initialPolicy?.description || '');
-    const [category, setCategory] = useState<PolicyCategory>(initialPolicy?.category || 'OPERATIONS');
+    const [category, setCategory] = useState<string>(initialPolicy?.category || 'OPERATIONS');
+    const [isCustomCategory, setIsCustomCategory] = useState(false);
     const [severity, setSeverity] = useState<PolicySeverity>(initialPolicy?.severity || 'WARNING');
     
     const [ruleType, setRuleType] = useState<RuleType>(initialPolicy?.ruleConfig?.type || 'REQUIRED_LABEL');
@@ -39,7 +42,7 @@ const PolicyEditorModal = ({
     if (!isOpen) return null;
 
     const handleSave = () => {
-        if (!name || !description) return;
+        if (!name || !description || !category) return;
         
         // Clean params based on type
         const cleanParams = { ...params };
@@ -65,19 +68,41 @@ const PolicyEditorModal = ({
                         <label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Description</label>
                         <Input value={description} onChange={e => setDescription(e.target.value)} placeholder="Explain the rule..." />
                     </div>
+                    
+                    {/* Category Selection */}
                     <div>
-                        <label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Category</label>
-                        <Select value={category} onChange={e => setCategory(e.target.value as any)}>
-                            <option value="OPERATIONS">Operations</option>
-                            <option value="SECURITY">Security</option>
-                            <option value="COST">Cost</option>
-                        </Select>
+                        <label className="text-[10px] uppercase font-bold text-slate-500 mb-1 flex justify-between">
+                            Category
+                            <button 
+                                onClick={() => { setIsCustomCategory(!isCustomCategory); if(!isCustomCategory) setCategory(''); }} 
+                                className="text-indigo-500 hover:underline cursor-pointer"
+                            >
+                                {isCustomCategory ? "Select Existing" : "Create New"}
+                            </button>
+                        </label>
+                        {isCustomCategory ? (
+                            <Input 
+                                value={category} 
+                                onChange={e => setCategory(e.target.value)} 
+                                placeholder="New Category Name" 
+                                autoFocus
+                            />
+                        ) : (
+                            <Select value={category} onChange={e => setCategory(e.target.value)}>
+                                {availableCategories.map(cat => (
+                                    <option key={cat} value={cat}>{cat}</option>
+                                ))}
+                            </Select>
+                        )}
                     </div>
+
+                    {/* Severity Selection */}
                     <div>
                         <label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Severity</label>
                         <Select value={severity} onChange={e => setSeverity(e.target.value as any)}>
                             <option value="INFO">Info</option>
                             <option value="WARNING">Warning</option>
+                            <option value="MEDIUM">Medium</option>
                             <option value="CRITICAL">Critical</option>
                         </Select>
                     </div>
@@ -151,7 +176,7 @@ export const PolicyManager: React.FC<PolicyManagerProps> = ({ resources, onUpdat
   const [policies, setPolicies] = useState<GovernancePolicy[]>(getPolicies(DEFAULT_TAXONOMY));
   
   const [activeTab, setActiveTab] = useState<'overview' | 'policies'>('overview');
-  const [selectedCategory, setSelectedCategory] = useState<PolicyCategory | 'ALL'>('ALL');
+  const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPolicy, setEditingPolicy] = useState<GovernancePolicy | undefined>(undefined);
@@ -163,24 +188,28 @@ export const PolicyManager: React.FC<PolicyManagerProps> = ({ resources, onUpdat
     const cleanResources = totalResources - violatedResources;
     const score = Math.round((cleanResources / totalResources) * 100);
     
-    // Category Breakdown
-    const byCategory = {
-        SECURITY: 0,
-        COST: 0,
-        OPERATIONS: 0
-    };
+    // Category Breakdown (Dynamic)
+    const byCategory: Record<string, number> = {};
+    policies.forEach(p => byCategory[p.category] = 0); // Init
 
     resources.forEach(r => {
         r.violations?.forEach(v => {
             const policy = policies.find(p => p.id === v.policyId);
             if (policy) {
-                byCategory[policy.category]++;
+                byCategory[policy.category] = (byCategory[policy.category] || 0) + 1;
             }
         });
     });
 
     return { score, violatedResources, cleanResources, totalResources, byCategory };
   }, [resources, policies]);
+
+  // Derive unique categories
+  const availableCategories = useMemo(() => {
+      const cats = new Set<string>();
+      policies.forEach(p => cats.add(p.category));
+      return Array.from(cats).sort();
+  }, [policies]);
 
   // Handlers
   const togglePolicy = (id: string) => {
@@ -224,6 +253,37 @@ export const PolicyManager: React.FC<PolicyManagerProps> = ({ resources, onUpdat
   };
 
   const filteredPolicies = selectedCategory === 'ALL' ? policies : policies.filter(p => p.category === selectedCategory);
+
+  // Helper for severity styling
+  const getSeverityBadge = (severity: PolicySeverity) => {
+      switch(severity) {
+          case 'CRITICAL': return <Badge variant="error" className="text-[9px]">CRITICAL</Badge>;
+          case 'MEDIUM': return <Badge variant="purple" className="text-[9px]">MEDIUM</Badge>;
+          case 'WARNING': return <Badge variant="warning" className="text-[9px]">WARNING</Badge>;
+          case 'INFO': return <Badge variant="info" className="text-[9px]">INFO</Badge>;
+          default: return <Badge variant="neutral" className="text-[9px]">{severity}</Badge>;
+      }
+  };
+
+  // Helper for category icon/color (simple hash-based selection)
+  const getCategoryStyles = (cat: string) => {
+      const styles = [
+          { color: 'text-amber-500', bg: 'bg-amber-500', icon: Lock, lightBg: 'bg-amber-100', lightText: 'text-amber-600' },
+          { color: 'text-emerald-500', bg: 'bg-emerald-500', icon: DollarSign, lightBg: 'bg-emerald-100', lightText: 'text-emerald-600' },
+          { color: 'text-blue-500', bg: 'bg-blue-500', icon: Activity, lightBg: 'bg-blue-100', lightText: 'text-blue-600' },
+          { color: 'text-violet-500', bg: 'bg-violet-500', icon: Layers, lightBg: 'bg-violet-100', lightText: 'text-violet-600' },
+          { color: 'text-pink-500', bg: 'bg-pink-500', icon: Box, lightBg: 'bg-pink-100', lightText: 'text-pink-600' }
+      ];
+      
+      // Fixed mapping for known types
+      if (cat === 'SECURITY') return styles[0];
+      if (cat === 'COST') return styles[1];
+      if (cat === 'OPERATIONS') return styles[2];
+      
+      // Hash-based for custom
+      const idx = Math.abs(cat.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)) % styles.length;
+      return styles[idx];
+  };
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-6xl mx-auto">
@@ -293,32 +353,23 @@ export const PolicyManager: React.FC<PolicyManagerProps> = ({ resources, onUpdat
                </Card>
             </div>
 
-            {/* Category Breakdown */}
+            {/* Category Breakdown - Dynamic Grid */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-               <CategoryCard 
-                  title="Security Posture" 
-                  icon={Lock} 
-                  count={stats.byCategory.SECURITY} 
-                  color="text-amber-500" 
-                  bg="bg-amber-500"
-                  onClick={() => { setSelectedCategory('SECURITY'); setActiveTab('policies'); }}
-               />
-               <CategoryCard 
-                  title="Cost Efficiency" 
-                  icon={DollarSign} 
-                  count={stats.byCategory.COST} 
-                  color="text-emerald-500" 
-                  bg="bg-emerald-500"
-                  onClick={() => { setSelectedCategory('COST'); setActiveTab('policies'); }}
-               />
-               <CategoryCard 
-                  title="Operational Standards" 
-                  icon={Activity} 
-                  count={stats.byCategory.OPERATIONS} 
-                  color="text-blue-500" 
-                  bg="bg-blue-500"
-                  onClick={() => { setSelectedCategory('OPERATIONS'); setActiveTab('policies'); }}
-               />
+               {availableCategories.map(cat => {
+                   const style = getCategoryStyles(cat);
+                   const count = stats.byCategory[cat] || 0;
+                   return (
+                       <CategoryCard 
+                          key={cat}
+                          title={cat.charAt(0).toUpperCase() + cat.slice(1).toLowerCase()} 
+                          icon={style.icon} 
+                          count={count} 
+                          color={style.color} 
+                          bg={style.bg}
+                          onClick={() => { setSelectedCategory(cat); setActiveTab('policies'); }}
+                       />
+                   )
+               })}
             </div>
          </div>
       )}
@@ -337,80 +388,91 @@ export const PolicyManager: React.FC<PolicyManagerProps> = ({ resources, onUpdat
             </div>
 
             <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-               {['ALL', 'SECURITY', 'COST', 'OPERATIONS'].map(cat => (
+               <button
+                  onClick={() => setSelectedCategory('ALL')}
+                  className={`px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${selectedCategory === 'ALL' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+               >
+                  All Policies
+               </button>
+               {availableCategories.map(cat => (
                   <button
                      key={cat}
-                     onClick={() => setSelectedCategory(cat as any)}
+                     onClick={() => setSelectedCategory(cat)}
                      className={`px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${selectedCategory === cat ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
                   >
-                     {cat === 'ALL' ? 'All Policies' : cat.charAt(0) + cat.slice(1).toLowerCase()}
+                     {cat.charAt(0).toUpperCase() + cat.slice(1).toLowerCase()}
                   </button>
                ))}
             </div>
 
             <div className="grid grid-cols-1 gap-4">
-                {filteredPolicies.map(policy => (
-                    <div key={policy.id} className={`p-5 rounded-xl border transition-all flex flex-col md:flex-row md:items-center gap-6 ${policy.isEnabled ? 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-sm' : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 opacity-60 grayscale'}`}>
-                        {/* Icon & Info */}
-                        <div className="flex items-start gap-4 flex-1">
-                            <div className={`p-3 rounded-xl shrink-0 ${policy.category === 'SECURITY' ? 'bg-amber-100 text-amber-600' : policy.category === 'COST' ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600'} dark:bg-opacity-20`}>
-                                {policy.category === 'SECURITY' ? <Lock className="w-5 h-5" /> : policy.category === 'COST' ? <DollarSign className="w-5 h-5" /> : <Activity className="w-5 h-5" />}
-                            </div>
-                            <div>
-                                <div className="flex items-center gap-3 mb-1">
-                                    <h4 className="font-bold text-slate-900 dark:text-white">{policy.name}</h4>
-                                    <Badge variant={policy.severity === 'CRITICAL' ? 'error' : policy.severity === 'WARNING' ? 'warning' : 'info'} className="text-[9px]">
-                                        {policy.severity}
-                                    </Badge>
-                                    {policy.isCustom && <Badge variant="purple" className="text-[9px]">Custom</Badge>}
+                {filteredPolicies.map(policy => {
+                    const style = getCategoryStyles(policy.category);
+                    const Icon = style.icon;
+
+                    return (
+                        <div key={policy.id} className={`p-5 rounded-xl border transition-all flex flex-col md:flex-row md:items-center gap-6 ${policy.isEnabled ? 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-sm' : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 opacity-60 grayscale'}`}>
+                            {/* Icon & Info */}
+                            <div className="flex items-start gap-4 flex-1">
+                                <div className={`p-3 rounded-xl shrink-0 ${style.lightBg} ${style.lightText} dark:bg-opacity-20`}>
+                                    <Icon className="w-5 h-5" />
                                 </div>
-                                <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xl">
-                                    {policy.description}
-                                </p>
+                                <div>
+                                    <div className="flex items-center gap-3 mb-1">
+                                        <h4 className="font-bold text-slate-900 dark:text-white">{policy.name}</h4>
+                                        {getSeverityBadge(policy.severity)}
+                                        {policy.isCustom && <Badge variant="purple" className="text-[9px]">Custom</Badge>}
+                                        <Badge variant="neutral" className="text-[9px] opacity-70">{policy.category}</Badge>
+                                    </div>
+                                    <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xl">
+                                        {policy.description}
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* Controls */}
+                            <div className="flex items-center gap-6 shrink-0 border-t md:border-t-0 md:border-l border-slate-100 dark:border-slate-800 pt-4 md:pt-0 md:pl-6">
+                                
+                                {/* Actions for Custom Policies */}
+                                {policy.isCustom && (
+                                    <div className="flex gap-2">
+                                        <Button size="xs" variant="ghost" onClick={() => openEditModal(policy)}><Edit3 className="w-3.5 h-3.5"/></Button>
+                                        <Button size="xs" variant="ghost" className="text-red-500 hover:bg-red-50" onClick={() => deletePolicy(policy.id)}><Trash2 className="w-3.5 h-3.5"/></Button>
+                                    </div>
+                                )}
+
+                                {!policy.isCustom && (
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-[9px] uppercase font-bold text-slate-400">Severity</span>
+                                        <select 
+                                            value={policy.severity}
+                                            onChange={(e) => updateSeverity(policy.id, e.target.value as PolicySeverity)}
+                                            className="text-xs bg-slate-50 dark:bg-slate-800 border-none rounded py-1 pl-2 pr-6 cursor-pointer focus:ring-0 font-bold text-slate-700 dark:text-slate-300"
+                                            disabled={!policy.isEnabled}
+                                        >
+                                            <option value="INFO">Info</option>
+                                            <option value="WARNING">Warning</option>
+                                            <option value="MEDIUM">Medium</option>
+                                            <option value="CRITICAL">Critical</option>
+                                        </select>
+                                    </div>
+                                )}
+                                
+                                <ToggleSwitch checked={policy.isEnabled} onChange={() => togglePolicy(policy.id)} />
+                                
+                                <Button 
+                                    size="xs" 
+                                    variant="ghost" 
+                                    className="text-slate-400 hover:text-indigo-600" 
+                                    onClick={() => onNavigateToViolations({ showViolationsOnly: true, violatedPolicyId: policy.id })} 
+                                    title="Filter Inventory by this policy"
+                                >
+                                    <Filter className="w-4 h-4" />
+                                </Button>
                             </div>
                         </div>
-
-                        {/* Controls */}
-                        <div className="flex items-center gap-6 shrink-0 border-t md:border-t-0 md:border-l border-slate-100 dark:border-slate-800 pt-4 md:pt-0 md:pl-6">
-                            
-                            {/* Actions for Custom Policies */}
-                            {policy.isCustom && (
-                                <div className="flex gap-2">
-                                    <Button size="xs" variant="ghost" onClick={() => openEditModal(policy)}><Edit3 className="w-3.5 h-3.5"/></Button>
-                                    <Button size="xs" variant="ghost" className="text-red-500 hover:bg-red-50" onClick={() => deletePolicy(policy.id)}><Trash2 className="w-3.5 h-3.5"/></Button>
-                                </div>
-                            )}
-
-                            {!policy.isCustom && (
-                                <div className="flex flex-col gap-1">
-                                    <span className="text-[9px] uppercase font-bold text-slate-400">Severity</span>
-                                    <select 
-                                        value={policy.severity}
-                                        onChange={(e) => updateSeverity(policy.id, e.target.value as PolicySeverity)}
-                                        className="text-xs bg-slate-50 dark:bg-slate-800 border-none rounded py-1 pl-2 pr-6 cursor-pointer focus:ring-0 font-bold text-slate-700 dark:text-slate-300"
-                                        disabled={!policy.isEnabled}
-                                    >
-                                        <option value="INFO">Info</option>
-                                        <option value="WARNING">Warning</option>
-                                        <option value="CRITICAL">Critical</option>
-                                    </select>
-                                </div>
-                            )}
-                            
-                            <ToggleSwitch checked={policy.isEnabled} onChange={() => togglePolicy(policy.id)} />
-                            
-                            <Button 
-                                size="xs" 
-                                variant="ghost" 
-                                className="text-slate-400 hover:text-indigo-600" 
-                                onClick={() => onNavigateToViolations({ showViolationsOnly: true, violatedPolicyId: policy.id })} 
-                                title="Filter Inventory by this policy"
-                            >
-                                <Filter className="w-4 h-4" />
-                            </Button>
-                        </div>
-                    </div>
-                ))}
+                    );
+                })}
             </div>
          </div>
       )}
@@ -421,6 +483,7 @@ export const PolicyManager: React.FC<PolicyManagerProps> = ({ resources, onUpdat
          onClose={() => setIsModalOpen(false)}
          onSave={handleSavePolicy}
          initialPolicy={editingPolicy}
+         availableCategories={availableCategories}
       />
     </div>
   );

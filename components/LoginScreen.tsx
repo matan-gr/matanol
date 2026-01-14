@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GcpCredentials } from '../types';
 import { APP_NAME, APP_VERSION } from '../constants';
@@ -32,6 +32,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onConnect, isConnectin
   const [token, setToken] = useState('');
   const [showSecurityModal, setShowSecurityModal] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+      const lastId = localStorage.getItem('lastProjectId');
+      if (lastId) setProjectId(lastId);
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -106,7 +111,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onConnect, isConnectin
                            <ConnectionStep label="Validate OAuth Token" active={progress < 20} completed={progress >= 20} />
                            <ConnectionStep label="Verify IAM Permissions" active={progress >= 20 && progress < 40} completed={progress >= 40} />
                            <ConnectionStep label="Connect Resource Manager" active={progress >= 40 && progress < 70} completed={progress >= 70} />
-                           <ConnectionStep label="Hydrate Governance Policy" active={progress >= 70 && progress < 100} completed={progress >= 100} />
+                           <ConnectionStep label="Sync Governance Config" active={progress >= 70 && progress < 100} completed={progress >= 100} />
                         </div>
                      </motion.div>
                   ) : (

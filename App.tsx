@@ -11,19 +11,18 @@ import { CommandPalette } from './components/CommandPalette';
 import { PolicyManager } from './components/PolicyManager';
 import { ComplianceReportModal } from './components/ComplianceReportModal';
 import { GlobalContextMenu } from './components/GlobalContextMenu';
-import { SettingsPage } from './components/SettingsPage'; // Import SettingsPage
+import { SettingsPage } from './components/SettingsPage'; 
+import { TimeMachine } from './components/TimeMachine';
 import { useNotifications } from './hooks/useNotifications';
 import { useResourceManager } from './hooks/useResourceManager';
 import { useLogs } from './hooks/useLogs';
 import { Button, Input, Card, SectionHeader } from './components/DesignSystem';
-import { Moon, Sun, Network, RefreshCw, ShieldCheck, FileText, Loader2, Sparkles } from 'lucide-react';
+import { Moon, Sun, Network, RefreshCw, ShieldCheck, FileText, Loader2, Sparkles, History } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Storage } from './utils/storage';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { QuotaVisuals } from './components/QuotaVisuals';
 import { fetchQuotas } from './services/gcpService';
 
-// Fix for framer-motion type mismatches
 const MotionDiv = motion.div as any;
 
 const DEFAULT_FILTER_CONFIG: FilterConfig = {
@@ -40,9 +39,8 @@ const DEFAULT_FILTER_CONFIG: FilterConfig = {
   showUnlabeledOnly: false
 };
 
-const IDLE_TIMEOUT_MS = 15 * 60 * 1000; // 15 Minutes
+const IDLE_TIMEOUT_MS = 15 * 60 * 1000; 
 
-// Enterprise-grade transition with spring physics
 const PageTransition: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <MotionDiv
     initial={{ opacity: 0, y: 15, scale: 0.99 }}
@@ -56,12 +54,10 @@ const PageTransition: React.FC<{ children: React.ReactNode }> = ({ children }) =
 );
 
 export const App = () => {
-  // State
   const [credentials, setCredentials] = useState<GcpCredentials | null>(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [filterConfig, setFilterConfig] = useState<FilterConfig>(DEFAULT_FILTER_CONFIG);
   
-  // Initialize isDark based on the class set by theme-loader.js to prevent mismatch
   const [isDark, setIsDark] = useState(() => {
     if (typeof document !== 'undefined') {
       return document.documentElement.classList.contains('dark');
@@ -71,11 +67,9 @@ export const App = () => {
 
   const [quotas, setQuotas] = useState<QuotaEntry[]>([]);
   const [isLoadingQuotas, setIsLoadingQuotas] = useState(false);
-  const [savedViews, setSavedViews] = useState<SavedView[]>([]);
   const [showReport, setShowReport] = useState(false);
-  const [isPaletteOpen, setIsPaletteOpen] = useState(false); // Global Palette State
+  const [isPaletteOpen, setIsPaletteOpen] = useState(false); 
 
-  // Hooks
   const { notifications, addNotification, dismissNotification } = useNotifications();
   const { 
     resources, 
@@ -83,7 +77,9 @@ export const App = () => {
     isConnecting, 
     loadingStatus, 
     report, 
-    isAnalysing, // Used for button state
+    isAnalysing, 
+    savedViews,
+    appSettings,
     connectProject, 
     loadDemoData, 
     analyzeResources, 
@@ -92,7 +88,9 @@ export const App = () => {
     clearReport,
     batchProgress,
     bulkUpdateLabels,
-    updateGovernance
+    updateGovernance,
+    updateSavedViews,
+    updateSettings
   } = useResourceManager(
     (msg, level) => {}, 
     addNotification
@@ -100,7 +98,6 @@ export const App = () => {
   
   const { logs, refreshGcpLogs, isLoadingLogs } = useLogs();
 
-  // --- Security: Idle Timeout ---
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const resetIdleTimer = useCallback(() => {
@@ -116,35 +113,22 @@ export const App = () => {
 
   useEffect(() => {
     if (!credentials) return;
-
     const events = ['mousedown', 'keydown', 'scroll', 'touchstart'];
     const handleActivity = () => resetIdleTimer();
-
-    // Initial start
     resetIdleTimer();
-
     events.forEach(evt => window.addEventListener(evt, handleActivity));
     return () => {
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
       events.forEach(evt => window.removeEventListener(evt, handleActivity));
     };
   }, [credentials, resetIdleTimer]);
-  // -----------------------------
 
-  useEffect(() => {
-    if (credentials?.projectId) {
-       Storage.get<SavedView[]>(credentials.projectId, 'saved_views', []).then(setSavedViews);
-    }
-  }, [credentials?.projectId]);
-
-  // Show report when generated
   useEffect(() => {
     if (report && !isAnalysing) {
         setShowReport(true);
     }
   }, [report, isAnalysing]);
 
-  // Global Key Listener for Cmd+K
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
@@ -159,7 +143,6 @@ export const App = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Handlers
   const toggleTheme = () => {
     setIsDark(prev => {
       const next = !prev;
@@ -175,13 +158,15 @@ export const App = () => {
   };
 
   const handleConnect = async (creds: GcpCredentials) => {
+    // Save Project ID locally for convenience
+    localStorage.setItem('lastProjectId', creds.projectId);
+    
     const success = await connectProject(creds);
     if (success) {
       setCredentials(creds);
       setActiveTab('dashboard');
       refreshGcpLogs(creds);
       
-      // Fetch Quotas asynchronously
       setIsLoadingQuotas(true);
       fetchQuotas(creds.projectId, creds.accessToken)
         .then(setQuotas)
@@ -194,7 +179,6 @@ export const App = () => {
     loadDemoData();
     setCredentials({ projectId: 'demo-mode', accessToken: 'demo-mode' });
     setActiveTab('dashboard');
-    // Fake quotas for demo
     setQuotas([
         { metric: 'CPUS', limit: 24, usage: 20, region: 'us-central1', percentage: 83.3 },
         { metric: 'SSD_TOTAL_GB', limit: 1024, usage: 800, region: 'us-central1', percentage: 78.1 },
@@ -217,9 +201,8 @@ export const App = () => {
       config: filterConfig,
       createdAt: Date.now()
     };
-    const updatedViews = [...savedViews, newView];
-    setSavedViews(updatedViews);
-    Storage.set(credentials.projectId, 'saved_views', updatedViews);
+    // Update and persist via hook
+    updateSavedViews([...savedViews, newView]);
     addNotification(`View "${name}" saved.`, 'success');
   };
 
@@ -231,8 +214,7 @@ export const App = () => {
   const handleDeleteView = (id: string) => {
     if (!credentials?.projectId) return;
     const updatedViews = savedViews.filter(v => v.id !== id);
-    setSavedViews(updatedViews);
-    Storage.set(credentials.projectId, 'saved_views', updatedViews);
+    updateSavedViews(updatedViews);
     addNotification('View deleted.', 'info');
   };
 
@@ -243,7 +225,6 @@ export const App = () => {
       setActiveTab('inventory');
   };
 
-  // Render Login
   if (!credentials) {
     return (
       <ErrorBoundary>
@@ -253,7 +234,6 @@ export const App = () => {
           loadingStatus={loadingStatus}
           onDemo={handleDemo}
         />
-        {/* Render Toast Container even on Login Screen - reuse Layout's logic but simplified for login */}
         <div className="fixed top-6 right-6 z-[100] flex flex-col gap-3 pointer-events-none w-full max-w-sm">
             <AnimatePresence>
                 {notifications.map(n => (
@@ -271,7 +251,6 @@ export const App = () => {
     );
   }
 
-  // Main App
   return (
     <ErrorBoundary>
       <CommandPalette 
@@ -346,7 +325,7 @@ export const App = () => {
                 onUpdateLabels={(id, labels) => updateResourceLabels(credentials, id, labels, false)}
                 onRevert={revertResource}
                 onBulkUpdateLabels={(updates) => bulkUpdateLabels(credentials, updates)}
-                onRefresh={() => handleConnect(credentials)} // Reuse connect for full refresh
+                onRefresh={() => handleConnect(credentials)} 
                 isLoading={isConnecting}
                 batchProgress={batchProgress}
               />
@@ -356,6 +335,15 @@ export const App = () => {
                  onClose={() => setShowReport(false)}
                  report={report}
               />
+            </PageTransition>
+          )}
+
+          {activeTab === 'timemachine' && (
+            <PageTransition key="timemachine">
+                <div className="h-[calc(100vh-140px)] min-h-[600px] flex flex-col">
+                    <SectionHeader title="Time Machine" subtitle="Compare infrastructure state against historical snapshots." />
+                    <TimeMachine currentResources={resources} projectId={credentials.projectId} />
+                </div>
             </PageTransition>
           )}
 
@@ -421,10 +409,13 @@ export const App = () => {
             </PageTransition>
           )}
 
-          {/* New Settings Tab */}
           {activeTab === 'settings' && (
             <PageTransition key="settings">
-                <SettingsPage projectId={credentials.projectId} />
+                <SettingsPage 
+                    projectId={credentials.projectId} 
+                    settings={appSettings}
+                    onUpdate={updateSettings}
+                />
             </PageTransition>
           )}
         </AnimatePresence>

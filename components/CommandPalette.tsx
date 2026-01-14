@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Search, Command, Monitor, Server, Database, 
   Settings, LogOut, Moon, Sun, ArrowRight, 
-  Layout, Network, FileText, Gauge
+  Layout, Network, FileText, Gauge, ShieldCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GceResource } from '../types';
@@ -49,9 +49,11 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     const actions: PaletteItem[] = [
       { id: 'nav-dashboard', label: 'Go to Dashboard', type: 'ACTION', icon: Layout, action: () => onNavigate('dashboard') },
       { id: 'nav-inventory', label: 'Go to Inventory', type: 'ACTION', icon: Server, action: () => onNavigate('inventory') },
+      { id: 'nav-policy', label: 'Go to Governance Center', type: 'ACTION', icon: ShieldCheck, action: () => onNavigate('policy') },
       { id: 'nav-topology', label: 'Go to Topology', type: 'ACTION', icon: Network, action: () => onNavigate('topology') },
       { id: 'nav-quotas', label: 'View Quotas', type: 'ACTION', icon: Gauge, action: () => onNavigate('quotas') },
       { id: 'nav-logs', label: 'View Logs', type: 'ACTION', icon: FileText, action: () => onNavigate('logs') },
+      { id: 'nav-settings', label: 'Configuration', type: 'ACTION', icon: Settings, action: () => onNavigate('settings') },
       { id: 'theme-toggle', label: 'Toggle Theme', type: 'ACTION', icon: Moon, action: onToggleTheme },
       { id: 'disconnect', label: 'Disconnect Account', type: 'ACTION', icon: LogOut, action: onDisconnect },
     ].filter(i => i.label.toLowerCase().includes(searchLower));

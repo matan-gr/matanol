@@ -1,5 +1,5 @@
 
-import { GceResource, ResourceType, LabelHistoryEntry, AnalysisResult } from '../types';
+import { GceResource, ResourceType, LabelHistoryEntry, AnalysisResult, TimelineEntry } from '../types';
 
 // --- Constants & Generators ---
 
@@ -222,4 +222,69 @@ export const mockAnalyzeResources = (resources: GceResource[]): AnalysisResult[]
       reasoning: "Based on resource name patterns and common infrastructure conventions."
     };
   }).filter(res => Object.keys(res.suggestedLabels).length > 0);
+};
+
+export const generateMockTimeline = (currentResources: GceResource[]): TimelineEntry[] => {
+    const timeline: TimelineEntry[] = [];
+    const now = new Date();
+    
+    // Create 3 snapshots: 7 days ago, 3 days ago, 1 day ago
+    [7, 3, 1].forEach(daysAgo => {
+        const date = new Date(now);
+        date.setDate(date.getDate() - daysAgo);
+        const dateStr = date.toISOString().split('T')[0];
+        
+        // Clone current resources using JSON to break reference
+        let snapshotResources = JSON.parse(JSON.stringify(currentResources));
+        
+        // Introduce drift based on daysAgo
+        snapshotResources = snapshotResources.map((r: any) => {
+            // 7 days ago: Some resources didn't exist yet (simulate ADDED in current)
+            if (daysAgo === 7 && Math.random() > 0.85) return null;
+            
+            // Modify some labels to simulate drift (MODIFIED)
+            if (Math.random() > 0.8) {
+                // Delete a current label to simulate it was added later
+                const keys = Object.keys(r.labels);
+                if (keys.length > 0) {
+                    delete r.labels[keys[0]];
+                }
+                // Or add a legacy label
+                r.labels = { ...r.labels, 'legacy-tag': 'true' };
+            }
+            
+            // Change status drift
+            if (Math.random() > 0.9) {
+                r.status = r.status === 'RUNNING' ? 'STOPPED' : 'RUNNING';
+            }
+            
+            // Re-calc hash for drift detection logic
+            r.labelHash = JSON.stringify(r.labels);
+            
+            return r;
+        }).filter(Boolean); // Remove nulls
+
+        // Add some resources that were deleted since then (REMOVED in current)
+        if (daysAgo === 7) {
+             // Add fake deleted resources
+             snapshotResources.push({
+                 id: 'deleted-resource-legacy-1',
+                 name: 'legacy-monolith-server',
+                 type: 'INSTANCE',
+                 status: 'TERMINATED',
+                 zone: 'us-central1-a',
+                 labels: { env: 'prod', legacy: 'true' },
+                 labelHash: JSON.stringify({ env: 'prod', legacy: 'true' }),
+                 meta: { machineType: 'n1-standard-4', sizeGb: 100 }
+             });
+        }
+
+        timeline.push({
+            date: dateStr,
+            timestamp: date.getTime(),
+            resources: snapshotResources
+        });
+    });
+    
+    return timeline;
 };

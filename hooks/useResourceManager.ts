@@ -1,11 +1,18 @@
 
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
-import { GceResource, GcpCredentials, LabelHistoryEntry, TaxonomyRule, GovernancePolicy } from '../types';
+import { GceResource, GcpCredentials, LabelHistoryEntry, TaxonomyRule, GovernancePolicy, SavedView, AppSettings } from '../types';
 import { fetchAllResources, updateResourceLabels as updateResourceLabelsApi, fetchResource } from '../services/gcpService';
 import { analyzeResourceBatch, generateComplianceReport } from '../services/geminiService';
 import { generateMockResources, mockAnalyzeResources } from '../services/mockService';
 import { persistenceService } from '../services/persistenceService';
-import { evaluateInventory, DEFAULT_TAXONOMY, getPolicies } from '../services/policyService';
+import { evaluateInventory, DEFAULT_TAXONOMY, getPolicies, restoreGovernanceContext } from '../services/policyService';
+
+const DEFAULT_SETTINGS: AppSettings = {
+    defaultRegion: 'global',
+    autoAnalyze: false,
+    costCenterFormat: 'cc-XXXX',
+    departmentList: []
+};
 
 export const useResourceManager = (
   addLog: (msg: string, level?: string) => void,
@@ -17,16 +24,17 @@ export const useResourceManager = (
   const [isAnalysing, setIsAnalysing] = useState(false);
   const [report, setReport] = useState<string>('');
   
-  // Enhanced Batch Progress State
-  const [batchProgress, setBatchProgress] = useState<{ processed: number, total: number, status: 'updating' | 'rolling-back' } | null>(null);
-  
+  // Persistent State
+  const [savedViews, setSavedViews] = useState<SavedView[]>([]);
+  const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [taxonomy, setTaxonomy] = useState<TaxonomyRule[]>(DEFAULT_TAXONOMY);
   const [activePolicies, setActivePolicies] = useState<GovernancePolicy[]>(getPolicies(DEFAULT_TAXONOMY));
 
+  const [batchProgress, setBatchProgress] = useState<{ processed: number, total: number, status: 'updating' | 'rolling-back' } | null>(null);
+  
   const currentCredentials = useRef<GcpCredentials | null>(null);
   const pendingResources = useRef<GceResource[]>([]);
 
-  // Derived state with memoization
   const governedResources = useMemo(() => {
     return evaluateInventory(resources, taxonomy, activePolicies);
   }, [resources, taxonomy, activePolicies]);
@@ -36,6 +44,25 @@ export const useResourceManager = (
     const labeled = governedResources.filter(r => Object.keys(r.labels).length > 0).length;
     return { total, labeled, unlabeled: total - labeled };
   }, [governedResources]);
+
+  // --- Helper to save state ---
+  const persistState = useCallback((
+      override?: { 
+          taxonomy?: TaxonomyRule[], 
+          policies?: GovernancePolicy[],
+          savedViews?: SavedView[],
+          settings?: AppSettings 
+      }
+  ) => {
+      if (currentCredentials.current && currentCredentials.current.accessToken !== 'demo-mode') {
+          persistenceService.saveGovernance(currentCredentials.current.projectId, {
+              taxonomy: override?.taxonomy || taxonomy,
+              policies: override?.policies || activePolicies,
+              savedViews: override?.savedViews || savedViews,
+              settings: override?.settings || appSettings
+          });
+      }
+  }, [taxonomy, activePolicies, savedViews, appSettings]);
 
   const connectProject = useCallback(async (credentials: GcpCredentials) => {
     setIsConnecting(true);
@@ -49,6 +76,23 @@ export const useResourceManager = (
       await persistenceService.init(credentials.projectId, credentials.accessToken);
       
       const historyMap = await persistenceService.getProjectHistory(credentials.projectId);
+
+      setLoadingStatus({ progress: 18, message: 'Loading Governance & Config...' });
+      const govData = await persistenceService.getGovernance(credentials.projectId);
+      
+      if (govData) {
+          // Restore State
+          setTaxonomy(govData.taxonomy);
+          setActivePolicies(restoreGovernanceContext(govData.policies, govData.taxonomy));
+          setSavedViews(govData.savedViews || []);
+          setAppSettings({ ...DEFAULT_SETTINGS, ...govData.settings });
+          addLog(`Loaded configuration from secure storage.`, 'INFO');
+      } else {
+          setTaxonomy(DEFAULT_TAXONOMY);
+          setActivePolicies(getPolicies(DEFAULT_TAXONOMY));
+          setSavedViews([]);
+          setAppSettings(DEFAULT_SETTINGS);
+      }
 
       setLoadingStatus({ progress: 20, message: 'Starting Resource Discovery...' });
       
@@ -69,11 +113,18 @@ export const useResourceManager = (
         }
       );
       
-      setResources(pendingResources.current);
+      const finalResources = pendingResources.current;
+      setResources(finalResources);
       setLoadingStatus({ progress: 100, message: 'Inventory Synced.' });
       
+      // AUTO-SAVE SNAPSHOT FOR TIME MACHINE
+      if (credentials.accessToken !== 'demo-mode') {
+          persistenceService.saveInventorySnapshot(credentials.projectId, finalResources)
+            .catch(e => console.error("Snapshot save failed (non-critical)", e));
+      }
+
       addLog('Discovery complete.', 'SUCCESS');
-      addNotification(`Connected. Managed ${pendingResources.current.length} resources.`, 'success');
+      addNotification(`Connected. Managed ${finalResources.length} resources.`, 'success');
       return true;
 
     } catch (error: any) {
@@ -99,7 +150,6 @@ export const useResourceManager = (
     return () => clearInterval(interval);
   }, [isConnecting, resources.length]);
 
-
   const refreshResources = useCallback(async () => {
     if (!currentCredentials.current) return;
     return connectProject(currentCredentials.current);
@@ -109,20 +159,20 @@ export const useResourceManager = (
     setIsConnecting(true);
     currentCredentials.current = { projectId: 'demo-mode', accessToken: 'demo-mode' };
     
-    // Simulate realistic loading steps
     setLoadingStatus({ progress: 10, message: 'Authenticating Demo User...' });
     await new Promise(r => setTimeout(r, 600));
-    
     setLoadingStatus({ progress: 30, message: 'Scanning Regions (us-central1, europe-west1)...' });
     await new Promise(r => setTimeout(r, 800));
-    
     setLoadingStatus({ progress: 60, message: 'Analyzing IAM Policies...' });
     const demoResources = generateMockResources(50); 
     setResources(demoResources);
     
+    setTaxonomy(DEFAULT_TAXONOMY);
+    setActivePolicies(getPolicies(DEFAULT_TAXONOMY));
+    setSavedViews([{ id: 'demo-view', name: 'Critical Prod Issues', createdAt: Date.now(), config: { search: 'prod', statuses: [], types: [], zones: [], machineTypes: [], hasPublicIp: null, dateStart: '', dateEnd: '', labelLogic: 'AND', labels: [], showUnlabeledOnly: false, showViolationsOnly: true } }]);
+
     setLoadingStatus({ progress: 85, message: 'Calculating Governance Scores...' });
     await new Promise(r => setTimeout(r, 500));
-
     setLoadingStatus({ progress: 100, message: 'Demo Environment Ready' });
     setIsConnecting(false);
     return true;
@@ -131,56 +181,44 @@ export const useResourceManager = (
   const updateGovernance = useCallback((newTaxonomy: TaxonomyRule[], newPolicies: GovernancePolicy[]) => {
       setTaxonomy(newTaxonomy);
       setActivePolicies(newPolicies);
-  }, []);
+      persistState({ taxonomy: newTaxonomy, policies: newPolicies });
+  }, [persistState]);
+
+  const updateSavedViews = useCallback((newViews: SavedView[]) => {
+      setSavedViews(newViews);
+      persistState({ savedViews: newViews });
+  }, [persistState]);
+
+  const updateSettings = useCallback((newSettings: AppSettings) => {
+      setAppSettings(newSettings);
+      persistState({ settings: newSettings });
+  }, [persistState]);
 
   const analyzeResources = useCallback(async () => {
     setIsAnalysing(true);
     addNotification('AI Auditor initiated. Scanning inventory...', 'info');
     
     try {
-      // DEMO MODE: Simulate AI analysis locally
       if (currentCredentials.current?.projectId === 'demo-mode') {
-          await new Promise(r => setTimeout(r, 2000)); // Fake latency
-          
+          await new Promise(r => setTimeout(r, 2000));
           const unlabeled = resources.filter(r => Object.keys(r.labels).length < 3).slice(0, 50);
           const results = mockAnalyzeResources(unlabeled);
-          
           setResources(prev => prev.map(res => {
               const match = results.find(r => r.resourceId === res.id);
               if (match) return { ...res, proposedLabels: match.suggestedLabels };
               return res;
           }));
-          
           addNotification(`AI Analysis complete. ${results.length} optimizations found.`, 'success');
-          
-          // Generate fake report
-          const reportText = `
-## Executive Summary
-The environment shows a **${Math.round((stats.labeled/stats.total)*100)}% compliance score**. While production assets are generally well-governed, there is significant "Shadow IT" activity in the development projects.
-
-## Risk Analysis
-- **Cost Risks**: Detected ${resources.filter(r=>r.status==='STOPPED').length} stopped instances incurring storage costs ($${(resources.filter(r=>r.status==='STOPPED').length * 20).toFixed(2)}/mo est).
-- **Security**: ${resources.filter(r=>r.publicAccess || r.ips?.some(i=>i.external)).length} resources have public internet exposure. 
-- **Tagging**: ${stats.unlabeled} resources are completely unlabeled, making cost allocation impossible.
-
-## Strategic Recommendations
-- **Immediate**: Label the "Shadow IT" resources in \`us-west1\`.
-- **Policy**: Enforce a "Cost Center" tag requirement at the Organization Policy level.
-- **Cleanup**: Delete the 2TB unattached disk found in \`us-central1\`.
-          `;
-          setReport(reportText);
+          setReport(`## Demo Report\nSimulated analysis complete.`);
           setIsAnalysing(false);
           return;
       }
 
-      // REAL MODE
       if ((window as any).aistudio) {
          try {
              const hasKey = await (window as any).aistudio.hasSelectedApiKey();
              if(!hasKey) await (window as any).aistudio.openSelectKey();
-         } catch(e) {
-             console.warn("AI Studio Key selection skipped or failed", e);
-         }
+         } catch(e) {}
       }
 
       const unlabeled = resources.filter(r => Object.keys(r.labels).length === 0).slice(0, 50); 
@@ -201,7 +239,6 @@ The environment shows a **${Math.round((stats.labeled/stats.total)*100)}% compli
       setReport(reportText);
       
     } catch (error: any) {
-      console.error("Analysis Error:", error);
       addNotification(`AI Analysis failed: ${error.message || 'Unknown error'}`, 'error');
     } finally {
       setIsAnalysing(false);
@@ -249,7 +286,6 @@ The environment shows a **${Math.round((stats.labeled/stats.total)*100)}% compli
         return r;
       }));
 
-      // Persistent Save
       if (credentials.accessToken !== 'demo-mode') {
           persistenceService.saveHistory(credentials.projectId, resourceId, updatedHistory);
       }
@@ -261,9 +297,6 @@ The environment shows a **${Math.round((stats.labeled/stats.total)*100)}% compli
     }
   }, [resources, addNotification]);
 
-  /**
-   * Atomic Bulk Update with Robust Rollback
-   */
   const bulkUpdateLabels = useCallback(async (
     credentials: GcpCredentials,
     updates: Map<string, Record<string, string>>
@@ -271,7 +304,7 @@ The environment shows a **${Math.round((stats.labeled/stats.total)*100)}% compli
      const idsToUpdate = Array.from(updates.keys());
      const count = idsToUpdate.length;
      
-     // Snapshot original state
+     // Snapshot original state for atomicity
      const originalStates = new Map<string, Record<string, string>>();
      resources.forEach(r => {
          if (updates.has(r.id)) {
@@ -279,21 +312,19 @@ The environment shows a **${Math.round((stats.labeled/stats.total)*100)}% compli
          }
      });
 
-     // 1. Optimistic UI update (Loading state only)
+     // 1. Optimistic UI update (Loading state)
      setResources(prev => prev.map(r => updates.has(r.id) ? { ...r, isUpdating: true } : r));
      setBatchProgress({ processed: 0, total: count, status: 'updating' });
 
      const successfulUpdates: string[] = [];
      let errorOccurred: Error | null = null;
-
-     // 2. Sequential Processing in Batches
      const BATCH_SIZE = 5; 
      
+     // 2. Sequential Batch Processing
      for (let i = 0; i < count; i += BATCH_SIZE) {
          if (errorOccurred) break;
 
          const chunkIds = idsToUpdate.slice(i, i + BATCH_SIZE);
-         
          const promises = chunkIds.map(async (id) => {
              const res = resources.find(r => r.id === id);
              const labels = updates.get(id);
@@ -330,10 +361,10 @@ The environment shows a **${Math.round((stats.labeled/stats.total)*100)}% compli
          addNotification(`Transaction failed. Rolling back ${successfulUpdates.length} changes...`, 'warning');
          setBatchProgress({ processed: 0, total: successfulUpdates.length, status: 'rolling-back' }); 
 
-         // --- ROLLBACK PHASE (Atomic Guarantee) ---
+         // --- ATOMIC ROLLBACK PHASE ---
          let rollbackCount = 0;
          
-         // Retry helper
+         // Retry helper for rollback robustness (Exponential Backoff)
          const retryRollback = async (fn: () => Promise<void>, retries = 3) => {
             for(let k=0; k<retries; k++) {
                 try {
@@ -341,6 +372,7 @@ The environment shows a **${Math.round((stats.labeled/stats.total)*100)}% compli
                     return;
                 } catch(e) {
                     if (k === retries - 1) throw e;
+                    // Backoff: 1s, 2s, 4s
                     await new Promise(r => setTimeout(r, 1000 * Math.pow(2, k)));
                 }
             }
@@ -370,7 +402,7 @@ The environment shows a **${Math.round((stats.labeled/stats.total)*100)}% compli
              }
          }
 
-         // Reset UI state to original (remove isUpdating, keep old labels)
+         // Reset UI state to original (remove isUpdating, revert data)
          setResources(prev => prev.map(r => {
              if (updates.has(r.id)) {
                  return { ...r, isUpdating: false };
@@ -382,14 +414,11 @@ The environment shows a **${Math.round((stats.labeled/stats.total)*100)}% compli
 
      } else {
          // --- COMMIT PHASE ---
-         // Update UI state with new labels only after full success
-         
          const updatesToPersist = new Map<string, LabelHistoryEntry[]>();
 
          setResources(prev => prev.map(r => {
              if (updates.has(r.id)) {
                  const newLabels = updates.get(r.id)!;
-                 
                  const historyEntry: LabelHistoryEntry = {
                      timestamp: new Date(),
                      actor: 'User (Batch)',
@@ -404,8 +433,8 @@ The environment shows a **${Math.round((stats.labeled/stats.total)*100)}% compli
                      ...r, 
                      labels: newLabels, 
                      isUpdating: false, 
-                     proposedLabels: undefined,
-                     history: newHistory
+                     proposedLabels: undefined, 
+                     history: newHistory 
                  };
              }
              return r;
@@ -429,12 +458,13 @@ The environment shows a **${Math.round((stats.labeled/stats.total)*100)}% compli
 
   return {
     resources: governedResources,
-    setResources,
     stats,
     isConnecting,
     loadingStatus, 
     isAnalysing,
     report,
+    savedViews,
+    appSettings,
     connectProject,
     refreshResources,
     loadDemoData,
@@ -444,6 +474,8 @@ The environment shows a **${Math.round((stats.labeled/stats.total)*100)}% compli
     revertResource,
     clearReport,
     batchProgress,
-    updateGovernance
+    updateGovernance,
+    updateSavedViews,
+    updateSettings
   };
 };

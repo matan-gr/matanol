@@ -1,5 +1,5 @@
 
-import { GceResource, GovernancePolicy, PolicyViolation, TaxonomyRule, PolicyRuleConfig } from '../types';
+import { GceResource, GovernancePolicy, PolicyViolation, TaxonomyRule, PolicyRuleConfig, PolicySeverity } from '../types';
 
 // --- Default Taxonomy Rules (Enterprise Standards) ---
 export const DEFAULT_TAXONOMY: TaxonomyRule[] = [
@@ -98,8 +98,8 @@ export const hydratePolicy = (policy: GovernancePolicy): GovernancePolicy => {
 export const createCustomPolicy = (
   name: string,
   description: string,
-  severity: 'CRITICAL' | 'WARNING' | 'INFO',
-  category: 'COST' | 'SECURITY' | 'OPERATIONS',
+  severity: PolicySeverity,
+  category: string,
   config: PolicyRuleConfig
 ): GovernancePolicy => {
   const policy: GovernancePolicy = {
@@ -200,10 +200,50 @@ export const getPolicies = (taxonomy: TaxonomyRule[]): GovernancePolicy[] => [
     description: 'Detects resources that are stopped but still incurring storage costs.',
     category: 'COST',
     isEnabled: true,
-    severity: 'WARNING',
+    severity: 'MEDIUM',
     check: (r) => checkUtilization(r)
   }
 ];
+
+/**
+ * Re-attaches logic to loaded policies.
+ * 1. For Standard policies: Merges saved config (enabled/severity) with code-defined logic.
+ * 2. For Custom policies: Re-generates the check function from the saved ruleConfig.
+ */
+export const restoreGovernanceContext = (
+  savedPolicies: GovernancePolicy[], 
+  savedTaxonomy: TaxonomyRule[]
+): GovernancePolicy[] => {
+  const standardPolicies = getPolicies(savedTaxonomy); // Get fresh code-backed standard policies
+  
+  // Create a map for quick lookup of standard policies
+  const standardMap = new Map(standardPolicies.map(p => [p.id, p]));
+
+  // Merge saved state
+  const restored = savedPolicies.map(p => {
+    if (p.isCustom) {
+      // Re-generate logic from config
+      return hydratePolicy(p); 
+    } else {
+      // Re-attach code to standard policy, but keep saved config (severity, enabled, category)
+      const standard = standardMap.get(p.id);
+      if (standard) {
+        // We override standard props with saved props, but force the 'check' function from standard
+        return { ...standard, ...p, check: standard.check };
+      }
+      return p; // Should not happen unless standard policy ID changed in code
+    }
+  });
+
+  // Ensure any NEW standard policies added to codebase since last save are included
+  standardPolicies.forEach(sp => {
+      if (!restored.find(p => p.id === sp.id)) {
+          restored.push(sp);
+      }
+  });
+
+  return restored;
+};
 
 export const evaluateResource = (
   resource: GceResource, 
@@ -213,6 +253,9 @@ export const evaluateResource = (
 
   policies.forEach(policy => {
     if (policy.isEnabled) {
+      // Defensive check in case hydration failed
+      if (!policy.check) return; 
+      
       const result = policy.check(resource);
       if (result) {
         violations.push({
