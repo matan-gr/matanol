@@ -3,9 +3,9 @@ import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { GceResource, FilterConfig, SavedView } from '../types';
 import { 
   CheckSquare, Square, Search, FilterX, ChevronDown, ChevronRight, Layers, Tag,
-  Server, Cloud, Box, Loader2, ArrowUp, ArrowDown, ArrowUpDown, AlertCircle
+  Server, Cloud, Box, Loader2, ArrowUp, ArrowDown, ArrowUpDown, AlertCircle, RefreshCw
 } from 'lucide-react';
-import { Button, Card, Badge, Tooltip } from './DesignSystem';
+import { Button, Card, Badge, Tooltip, GlassCard } from './DesignSystem';
 import { ResourceRow } from './ResourceRow';
 import { ResourceFilters, BulkActionBar, PaginationControl } from './TableControls';
 import { AuditHistoryModal } from './AuditHistoryModal';
@@ -32,7 +32,7 @@ interface ResourceTableProps {
   onBulkUpdateLabels?: (updates: Map<string, Record<string, string>>) => void;
   onRefresh?: () => void;
   isLoading?: boolean;
-  batchProgress?: { processed: number, total: number } | null;
+  batchProgress?: { processed: number, total: number, status: 'updating' | 'rolling-back' } | null;
 }
 
 type DisplayItem = 
@@ -142,13 +142,6 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
     });
   };
 
-  const SortIcon = ({ colKey }: { colKey: string }) => {
-    if (sortConfig?.key !== colKey) return <ArrowUpDown className="w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-50 transition-opacity" />;
-    return sortConfig.direction === 'asc' 
-      ? <ArrowUp className="w-3 h-3 text-indigo-500" /> 
-      : <ArrowDown className="w-3 h-3 text-indigo-500" />;
-  };
-
   const toggleSelectAll = useCallback(() => {
      setSelectedIds(prev => {
         if (prev.size > 0 && prev.size === filteredResources.length) {
@@ -199,21 +192,21 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
      
      if (resources.length === 0) {
         return (
-          <div className="flex flex-col items-center justify-center py-24 w-full text-center">
-             <div className="relative group">
+          <div className="flex flex-col items-center justify-center py-32 w-full text-center">
+             <div className="relative group mb-6">
                 <div className="absolute inset-0 bg-blue-500/20 rounded-full blur-2xl group-hover:blur-3xl transition-all duration-700 animate-pulse"></div>
                 <div className="bg-white dark:bg-slate-900 p-8 rounded-full relative shadow-2xl border border-slate-200 dark:border-slate-800">
-                    <Cloud className="w-16 h-16 text-slate-300 dark:text-slate-600" />
+                    <Cloud className="w-12 h-12 text-slate-300 dark:text-slate-600" />
                 </div>
              </div>
-             <h3 className="text-2xl font-bold text-slate-800 dark:text-slate-200 mt-8 mb-2">No Resources Detected</h3>
+             <h3 className="text-xl font-bold text-slate-800 dark:text-slate-200 mb-2">No Resources Found</h3>
              <p className="max-w-md text-slate-500 dark:text-slate-400 text-sm leading-relaxed mb-8">
-                We couldn't find any resources in this project. 
-                Verify your API Token permissions or try refreshing the connection.
+                We couldn't detect any resources in this project. 
+                <br/>Verify your API permissions or check the region filters.
              </p>
              {onRefresh && (
-                <Button variant="primary" onClick={onRefresh} className="shadow-lg shadow-blue-500/20">
-                    Retry Connection
+                <Button variant="primary" onClick={onRefresh} className="shadow-lg shadow-blue-500/20" leftIcon={<RefreshCw className="w-4 h-4"/>}>
+                    Scan Again
                 </Button>
              )}
           </div>
@@ -221,9 +214,9 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
      }
 
      return (
-        <div className="flex flex-col items-center justify-center py-20 w-full animate-in fade-in zoom-in-95 duration-300">
+        <div className="flex flex-col items-center justify-center py-24 w-full animate-in fade-in zoom-in-95 duration-300">
            <div className="bg-slate-50 dark:bg-slate-900/50 p-6 rounded-full mb-4 border border-slate-200 dark:border-slate-800 shadow-inner">
-              <FilterX className="w-10 h-10 text-indigo-400" />
+              <FilterX className="w-8 h-8 text-indigo-400" />
            </div>
            <h3 className="text-lg font-semibold text-slate-700 dark:text-slate-300">No matching resources</h3>
            <p className="max-w-xs text-center mt-2 text-sm text-slate-500">
@@ -247,7 +240,8 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
 
   return (
     <div className="flex flex-col relative h-auto">
-       <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm mb-6 z-30 sticky top-4">
+       {/* Filters Container - Sticky z-50 to stay on top */}
+       <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm mb-6 z-50 sticky top-4">
            <ResourceFilters 
               config={filterConfig} 
               onChange={onFilterChange} 
@@ -269,13 +263,18 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
            />
 
            {batchProgress && (
-              <div className="absolute top-0 left-0 right-0 h-1 z-50 rounded-t-2xl overflow-hidden">
+              <div className="absolute top-0 left-0 right-0 h-1 z-50 overflow-hidden rounded-t-2xl">
                  <MotionDiv 
-                   className="h-full bg-blue-500"
+                   className={`h-full ${batchProgress.status === 'rolling-back' ? 'bg-red-500' : 'bg-blue-500'}`}
                    initial={{ width: 0 }}
                    animate={{ width: `${(batchProgress.processed / batchProgress.total) * 100}%` }}
                    transition={{ duration: 0.2 }}
                  />
+                 {batchProgress.status === 'rolling-back' && (
+                    <div className="absolute top-2 right-4 text-[10px] font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded shadow-sm animate-pulse">
+                        Rolling back changes...
+                    </div>
+                 )}
               </div>
            )}
 
@@ -296,50 +295,11 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
        <div className="relative min-h-[400px]">
           {/* Responsive Table Wrapper */}
           <div className="overflow-x-auto w-full pb-4">
-            <table className="w-full text-left text-sm border-separate border-spacing-y-6 min-w-[900px]">
-               <thead>
-                 <tr className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">
-                   <th className="pl-6 pr-3 py-2 w-16">
-                      <button onClick={toggleSelectAll} className="hover:text-slate-800 dark:hover:text-slate-200 transition-colors flex items-center">
-                        {selectedIds.size > 0 && selectedIds.size === filteredResources.length ? <CheckSquare className="w-5 h-5 text-blue-600 dark:text-blue-500"/> : <Square className="w-5 h-5"/>}
-                      </button>
-                   </th>
-                   <th className="px-4 py-2 w-[280px] cursor-pointer group hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" onClick={() => handleSort('name')}>
-                      <div className="flex items-center gap-1.5">
-                         Identity
-                         <SortIcon colKey="name" />
-                      </div>
-                   </th>
-                   <th className="px-4 py-2 w-[200px] cursor-pointer group hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" onClick={() => handleSort('type')}>
-                      <div className="flex items-center gap-1.5">
-                         Infrastructure
-                         <SortIcon colKey="type" />
-                      </div>
-                   </th>
-                   <th className="px-4 py-2 w-[220px]">Configuration</th>
-                   <th className="px-4 py-2 w-[200px]">
-                      <div className="flex items-center gap-3">
-                         <button 
-                            className="flex items-center gap-1 cursor-pointer group hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
-                            onClick={() => handleSort('status')}
-                         >
-                            State
-                            <SortIcon colKey="status" />
-                         </button>
-                         <span className="text-slate-300 dark:text-slate-700">|</span>
-                         <button 
-                            className="flex items-center gap-1 cursor-pointer group hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
-                            onClick={() => handleSort('creationTimestamp')}
-                         >
-                            Lifecycle
-                            <SortIcon colKey="creationTimestamp" />
-                         </button>
-                      </div>
-                   </th>
-                   <th className="px-4 py-2">Governance</th>
-                   <th className="pr-6 pl-4 py-2 text-right w-[100px]"></th>
-                 </tr>
-               </thead>
+            <table className="w-full text-left text-sm border-separate border-spacing-y-4 min-w-[1000px]">
+               {/* 
+                  NOTE: Table header removed per user request to fix layout issues.
+                  Sorting is currently unavailable via UI. 
+               */}
                <tbody>
                  {/* Show skeletons only if we have NO resources yet and are loading */}
                  {isLoading && resources.length === 0 && Array.from({ length: 5 }).map((_, i) => <TableRowSkeleton key={i} />)}

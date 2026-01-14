@@ -6,7 +6,7 @@ import {
   ChevronRight, ChevronDown, FileText, Monitor, Globe, 
   AlertOctagon, AlertTriangle, Search, Info, Code, FileJson
 } from 'lucide-react';
-import { Button, Input, Badge } from './DesignSystem';
+import { Button, Input, Badge, GlassCard } from './DesignSystem';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface LogViewerProps {
@@ -36,12 +36,12 @@ const getMethodLabel = (methodName: string) => {
 const ServiceIcon = ({ service }: { service?: string }) => {
   if (service?.includes('compute')) return <Activity className="w-3.5 h-3.5 text-blue-500" />;
   if (service?.includes('storage')) return <Box className="w-3.5 h-3.5 text-yellow-500" />;
-  if (service?.includes('sql')) return <Activity className="w-3.5 h-3.5 text-cyan-500" />; // Database icon not available in this scope, reused Activity
+  if (service?.includes('sql')) return <Activity className="w-3.5 h-3.5 text-cyan-500" />;
   return <Terminal className="w-3.5 h-3.5 text-slate-400" />;
 };
 
 const JsonTree = ({ data }: { data: any }) => (
-  <pre className="font-mono text-[10px] leading-relaxed text-slate-600 dark:text-slate-300 whitespace-pre-wrap break-all bg-slate-50 dark:bg-slate-950 p-4 rounded-lg border border-slate-200 dark:border-slate-800 overflow-x-auto">
+  <pre className="font-mono text-[10px] leading-relaxed text-slate-600 dark:text-slate-300 whitespace-pre-wrap break-all bg-slate-50 dark:bg-slate-950 p-4 rounded-lg border border-slate-200 dark:border-slate-800 overflow-x-auto shadow-inner">
     {JSON.stringify(data, null, 2)}
   </pre>
 );
@@ -83,27 +83,27 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({ logs, onRefresh
   };
 
   return (
-    <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex flex-col h-full ring-1 ring-slate-900/5">
+    <GlassCard className="flex flex-col h-full overflow-hidden border-slate-200 dark:border-slate-800">
       
       {/* 1. Toolbar */}
-      <div className="flex items-center justify-between px-4 py-3 bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-800 shrink-0 gap-4">
+      <div className="flex items-center justify-between px-4 py-3 bg-slate-50/50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-800 shrink-0 gap-4 sticky top-0 backdrop-blur-sm z-10">
         <div className="flex items-center gap-3">
            <div className="p-2 bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm">
               <Terminal className="w-4 h-4 text-slate-500 dark:text-slate-400" />
            </div>
            <div>
               <h3 className="text-sm font-bold text-slate-800 dark:text-white">Audit Trail</h3>
-              <p className="text-[10px] text-slate-500 font-medium">{filteredLogs.length} events logged</p>
+              <p className="text-[10px] text-slate-500 font-medium font-mono">{filteredLogs.length} events</p>
            </div>
         </div>
 
         <div className="flex-1 max-w-md">
            <Input 
-              placeholder="Search logs (method, user, resource)..." 
+              placeholder="Search logs..." 
               value={search}
               onChange={e => setSearch(e.target.value)}
               icon={<Search className="w-3.5 h-3.5" />}
-              className="bg-white dark:bg-slate-900 h-9 text-xs"
+              className="bg-white dark:bg-slate-950 h-9 text-xs font-mono"
            />
         </div>
 
@@ -115,19 +115,19 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({ logs, onRefresh
                 onClick={onRefresh} 
                 disabled={isLoading}
                 leftIcon={<RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />}
-                className="bg-white dark:bg-slate-900"
+                className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700"
              >
                 Refresh
              </Button>
           )}
-          <Button variant="ghost" size="sm" className="h-9 w-9 p-0 text-slate-500">
+          <Button variant="ghost" size="sm" className="h-9 w-9 p-0 text-slate-500 hover:text-indigo-500">
             <Download className="w-4 h-4" />
           </Button>
         </div>
       </div>
       
       {/* 2. List Header */}
-      <div className="grid grid-cols-[40px_120px_1fr_1.5fr_1.5fr] gap-4 px-4 py-2 bg-slate-100 dark:bg-slate-900 text-[10px] uppercase font-bold text-slate-500 border-b border-slate-200 dark:border-slate-800 pr-6 shrink-0 tracking-wider">
+      <div className="grid grid-cols-[40px_120px_1fr_1.5fr_1.5fr] gap-4 px-4 py-2 bg-slate-100/80 dark:bg-slate-900/80 text-[10px] uppercase font-bold text-slate-500 border-b border-slate-200 dark:border-slate-800 pr-6 shrink-0 tracking-wider sticky top-[60px] z-10 backdrop-blur-md">
          <div className="text-center">#</div>
          <div>Timestamp</div>
          <div>Action</div>
@@ -139,14 +139,14 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({ logs, onRefresh
       <div 
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto p-0 font-sans text-xs divide-y divide-slate-100 dark:divide-slate-800/50 bg-white dark:bg-slate-950 scroll-smooth"
+        className="flex-1 overflow-y-auto p-0 font-sans text-xs divide-y divide-slate-100 dark:divide-slate-800/50 bg-white/50 dark:bg-slate-950/50 scroll-smooth"
       >
         {filteredLogs.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-3">
-             <div className="w-12 h-12 rounded-full bg-slate-50 dark:bg-slate-900 flex items-center justify-center">
+          <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-3 py-10">
+             <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-900 flex items-center justify-center">
                 <Search className="w-6 h-6 opacity-30" />
              </div>
-             <p>No matching logs found</p>
+             <p className="font-medium">No matching logs found</p>
           </div>
         )}
 
@@ -164,15 +164,15 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({ logs, onRefresh
                    ${isExpanded 
                      ? 'bg-blue-50/50 dark:bg-blue-900/10 border-l-blue-500' 
                      : isError 
-                        ? 'border-l-red-500 hover:bg-red-50/50 dark:hover:bg-red-900/10' 
-                        : 'border-l-transparent hover:bg-slate-50 dark:hover:bg-slate-900/40'}
+                        ? 'border-l-red-500 bg-red-50/10 dark:bg-red-900/5 hover:bg-red-50/20 dark:hover:bg-red-900/10' 
+                        : 'border-l-transparent hover:bg-slate-50 dark:hover:bg-slate-900/30'}
                 `}
               >
                 {/* Icon Column */}
                 <div className="flex justify-center">
                     <div className={`
-                       w-6 h-6 rounded-md flex items-center justify-center 
-                       ${isError ? 'bg-red-100 text-red-600 dark:bg-red-900/30' : 'bg-slate-100 text-slate-500 dark:bg-slate-800'}
+                       w-6 h-6 rounded-md flex items-center justify-center shadow-sm border
+                       ${isError ? 'bg-red-100 text-red-600 dark:bg-red-900/30 border-red-200 dark:border-red-900/50' : 'bg-white text-slate-500 dark:bg-slate-800 border-slate-200 dark:border-slate-700'}
                     `}>
                         {isError ? <AlertOctagon className="w-3.5 h-3.5" /> : <ServiceIcon service={log.serviceName} />}
                     </div>
@@ -180,16 +180,16 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({ logs, onRefresh
 
                 {/* Time */}
                 <div className="flex flex-col text-slate-500 dark:text-slate-400">
-                  <span className="font-mono text-[11px] font-medium">{log.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'})}</span>
+                  <span className="font-mono text-[11px] font-medium text-slate-700 dark:text-slate-300">{log.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'})}</span>
                   <span className="text-[9px] opacity-70">{log.timestamp.toLocaleDateString()}</span>
                 </div>
                 
                 {/* Action */}
                 <div className="flex items-center gap-2 min-w-0">
-                   <span className={`font-semibold truncate ${isError ? 'text-red-600 dark:text-red-400' : 'text-slate-700 dark:text-slate-200'}`}>
+                   <span className={`font-semibold truncate text-[11px] ${isError ? 'text-red-600 dark:text-red-400' : 'text-slate-700 dark:text-slate-200'}`}>
                       {methodLabel}
                    </span>
-                   {isError && <Badge variant="error" className="px-1 py-0 text-[9px]">FAIL</Badge>}
+                   {isError && <Badge variant="error" className="px-1 py-0 text-[9px] h-4">FAIL</Badge>}
                 </div>
 
                 {/* Resource */}
@@ -202,7 +202,7 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({ logs, onRefresh
                 <div className="flex items-center gap-1.5 min-w-0 justify-between">
                    <div className="flex items-center gap-1.5 truncate">
                       <User className="w-3.5 h-3.5 shrink-0 opacity-50" />
-                      <span className="truncate text-slate-600 dark:text-slate-400" title={log.principalEmail}>
+                      <span className="truncate text-slate-600 dark:text-slate-400 font-medium" title={log.principalEmail}>
                          {log.principalEmail.replace('serviceAccount:', '').split('@')[0]}
                       </span>
                    </div>
@@ -217,7 +217,7 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({ logs, onRefresh
                     initial={{ height: 0, opacity: 0 }}
                     animate={{ height: 'auto', opacity: 1 }}
                     exit={{ height: 0, opacity: 0 }}
-                    className="overflow-hidden bg-slate-50 dark:bg-slate-950/30 border-b border-slate-100 dark:border-slate-800"
+                    className="overflow-hidden bg-slate-50 dark:bg-slate-950/50 border-b border-slate-100 dark:border-slate-800"
                   >
                      <div className="px-14 py-4 grid grid-cols-1 md:grid-cols-2 gap-8">
                         
@@ -234,7 +234,7 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({ logs, onRefresh
                                  </div>
                                  <div className="flex justify-between py-1 border-b border-slate-200 dark:border-slate-800 border-dashed">
                                     <span className="text-slate-500">Principal</span>
-                                    <span className="text-slate-700 dark:text-slate-300">{log.principalEmail}</span>
+                                    <span className="text-slate-700 dark:text-slate-300 break-all">{log.principalEmail}</span>
                                  </div>
                                  {log.callerIp && (
                                     <div className="flex justify-between py-1 border-b border-slate-200 dark:border-slate-800 border-dashed">
@@ -245,7 +245,7 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({ logs, onRefresh
                                  {log.userAgent && (
                                     <div className="py-1">
                                        <span className="text-slate-500 block mb-1">User Agent</span>
-                                       <div className="text-[10px] text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-900 p-1.5 rounded break-all leading-tight">
+                                       <div className="text-[10px] text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-800 break-all leading-tight font-mono">
                                           {log.userAgent}
                                        </div>
                                     </div>
@@ -254,7 +254,7 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({ logs, onRefresh
                            </div>
 
                            {log.status && log.status.code !== 0 && (
-                              <div className="bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/30 p-3 rounded-lg">
+                              <div className="bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/30 p-3 rounded-lg shadow-sm">
                                  <div className="text-[10px] uppercase font-bold text-red-500 mb-1 flex items-center gap-1">
                                     <AlertTriangle className="w-3 h-3" /> Error Details
                                  </div>
@@ -271,7 +271,7 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({ logs, onRefresh
                               <h4 className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
                                  <FileJson className="w-3 h-3" /> Request Payload
                               </h4>
-                              {log.metadata && <span className="text-[9px] bg-slate-200 dark:bg-slate-800 text-slate-500 px-1.5 rounded">JSON</span>}
+                              {log.metadata && <span className="text-[9px] bg-slate-200 dark:bg-slate-800 text-slate-500 px-1.5 rounded font-mono">JSON</span>}
                            </div>
                            
                            {log.metadata ? (
@@ -291,6 +291,6 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({ logs, onRefresh
           );
         })}
       </div>
-    </div>
+    </GlassCard>
   );
 });

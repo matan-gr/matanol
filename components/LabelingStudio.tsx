@@ -2,15 +2,13 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { GceResource } from '../types';
 import { 
-  Tag, Split, Eraser, ArrowRight, Save, X, 
-  RefreshCw, Plus, Trash2, Regex as RegexIcon,
-  Bot, Lightbulb, Check, Play, Layers,
-  Replace, LayoutTemplate, Sparkles, AlertCircle,
-  FileCode, SaveAll, Undo, ChevronRight, Eye, AlertTriangle,
-  Scissors, Wand2, Loader2, ArrowDown
+  Tag, Eraser, ArrowRight, Save, X, 
+  RefreshCw, Plus, Trash2,
+  Lightbulb, Check, Layers,
+  Replace, Eye, Scissors, Wand2, Loader2, ArrowDown, Split
 } from 'lucide-react';
-import { Button, Input, Select, Badge, Card, ToggleSwitch, Tooltip } from './DesignSystem';
-import { motion, AnimatePresence, Reorder } from 'framer-motion';
+import { Button, Input, ToggleSwitch, Badge } from './DesignSystem';
+import { motion, AnimatePresence } from 'framer-motion';
 import { analyzeNamingPatterns } from '../services/geminiService';
 import { validateKey, validateValue } from '../utils/validation';
 
@@ -56,14 +54,14 @@ const DEFAULT_OPERATIONS: Record<OperationType, LabelOperation> = {
 
 const MACROS = [
   { 
-    name: "Standardize: Env & Owner", 
+    name: "Standardize: Env & App", 
     ops: [
       { id: '1', type: 'ADD', config: { key: 'managed-by', value: 'yalla-label' }, enabled: true },
       { id: '2', type: 'PATTERN', config: { delimiter: '-', mappings: [{ index: 0, targetKey: 'env' }, { index: 1, targetKey: 'app' }] }, enabled: true }
     ] as LabelOperation[]
   },
   {
-    name: "Cleanup: Remove Temp",
+    name: "Cleanup: Temp Labels",
     ops: [
       { id: '1', type: 'REMOVE', config: { key: 'temp' }, enabled: true },
       { id: '2', type: 'REMOVE', config: { key: 'test-run' }, enabled: true }
@@ -72,12 +70,12 @@ const MACROS = [
 ];
 
 const HELP_TEXTS = {
-    ADD: "Adds a new label key-value pair. If the key exists, it will be overwritten.",
-    REMOVE: "Removes a label if the key matches.",
-    REPLACE: "Finds a specific label value across all keys and replaces it.",
-    EXTRACT_REGEX: "Extracts parts of the resource Name using Regex capture groups.",
-    PATTERN: "Splits the resource Name by a delimiter and maps position to label keys.",
-    CASE_TRANSFORM: "Converts all label values to lowercase or uppercase for consistency.",
+    ADD: "Adds a static label. Overwrites if key exists.",
+    REMOVE: "Removes a label by key.",
+    REPLACE: "Finds and replaces text within label values.",
+    EXTRACT_REGEX: "Extracts label values from resource Name using Regex groups.",
+    PATTERN: "Splits resource Name by a delimiter to extract values.",
+    CASE_TRANSFORM: "Standardizes letter casing for keys and values.",
 };
 
 // --- Logic ---
@@ -158,10 +156,10 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
   // Initialize
   useEffect(() => {
     if (isOpen && pipeline.length === 0) {
-      addOperation('ADD');
+      addOperation('PATTERN'); // Start with pattern as it's the most common use case
     }
     if (!isOpen) {
-        setViewMode('BUILD'); // Reset on close
+        setViewMode('BUILD'); 
     }
   }, [isOpen]);
 
@@ -296,10 +294,10 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
         className="relative w-full max-w-6xl h-[90vh] bg-slate-50 dark:bg-slate-950 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden"
       >
         {/* Header */}
-        <div className="h-16 px-6 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-white/50 dark:bg-slate-900/50 backdrop-blur-md shrink-0">
+        <div className="h-16 px-6 border-b border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md shrink-0">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-indigo-600 rounded-lg text-white shadow-lg shadow-indigo-500/20">
-              <Sparkles className="w-5 h-5" />
+              <Wand2 className="w-5 h-5" />
             </div>
             <div>
               <h2 className="text-lg font-bold text-slate-900 dark:text-white leading-tight">Labeling Studio</h2>
@@ -337,19 +335,19 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
             <div className="flex-1 flex overflow-hidden animate-in fade-in duration-300">
                 
                 {/* LEFT: Rule Builder */}
-                <div className="w-full md:w-[480px] bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col">
+                <div className="w-full md:w-[500px] bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col">
                     <div className="p-4 border-b border-slate-100 dark:border-slate-800/50 bg-slate-50/50 dark:bg-slate-950/30 flex justify-between items-center">
                         <h3 className="text-xs font-bold uppercase text-slate-500 tracking-wider flex items-center gap-2">
-                        <Layers className="w-4 h-4"/> Operations
+                        <Layers className="w-4 h-4"/> Operations Pipeline
                         </h3>
                     </div>
 
                     <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-slate-50/30 dark:bg-slate-950/20">
                         {pipeline.length === 0 && (
-                        <div className="text-center py-10 text-slate-400 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
-                            <Bot className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                            <p className="text-sm">No rules defined.</p>
-                            <p className="text-xs mt-1">Add an operation to start.</p>
+                        <div className="text-center py-12 text-slate-400 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
+                            <Tag className="w-10 h-10 mx-auto mb-3 opacity-20" />
+                            <p className="text-sm font-medium">No operations added.</p>
+                            <p className="text-xs mt-1">Start by adding a rule below.</p>
                         </div>
                         )}
                         
@@ -358,15 +356,15 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
                             <motion.div
                             key={op.id}
                             layout
-                            initial={{ opacity: 0, scale: 0.95 }}
-                            animate={{ opacity: 1, scale: 1 }}
+                            initial={{ opacity: 0, x: -10 }}
+                            animate={{ opacity: 1, x: 0 }}
                             exit={{ opacity: 0, scale: 0.95 }}
-                            className={`relative bg-white dark:bg-slate-800/50 border rounded-xl shadow-sm transition-all group hover:shadow-md ${op.enabled ? 'border-slate-200 dark:border-slate-700' : 'opacity-60 border-slate-100 dark:border-slate-800'}`}
+                            className={`relative bg-white dark:bg-slate-800/50 border rounded-xl shadow-sm transition-all group ${op.enabled ? 'border-slate-200 dark:border-slate-700' : 'opacity-60 border-slate-100 dark:border-slate-800'}`}
                             >
                             {/* Operation Header */}
                             <div className="flex items-center gap-3 p-3 border-b border-slate-100 dark:border-slate-700/50">
                                 <div className="flex flex-col items-center justify-center gap-1">
-                                    <span className="text-[10px] font-mono text-slate-300 dark:text-slate-600">{idx + 1}</span>
+                                    <span className="text-[10px] font-mono text-slate-300 dark:text-slate-600 bg-slate-100 dark:bg-slate-900 w-5 h-5 flex items-center justify-center rounded-full">{idx + 1}</span>
                                     <ToggleSwitch checked={op.enabled} onChange={(v) => updateOperation(op.id, { enabled: v })} />
                                 </div>
                                 
@@ -376,16 +374,16 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
                                         onChange={(e) => updateOperation(op.id, { type: e.target.value as OperationType, config: { ...DEFAULT_OPERATIONS[e.target.value as OperationType].config } })}
                                         className="w-full bg-transparent text-sm font-bold text-slate-700 dark:text-slate-200 focus:outline-none cursor-pointer"
                                     >
-                                        <option value="ADD">Add Label</option>
+                                        <option value="PATTERN">Split by Delimiter</option>
+                                        <option value="ADD">Add Static Label</option>
                                         <option value="REMOVE">Remove Label</option>
-                                        <option value="REPLACE">Normalize Value</option>
-                                        <option value="PATTERN">Pattern Split</option>
-                                        <option value="EXTRACT_REGEX">Extract (Regex)</option>
-                                        <option value="CASE_TRANSFORM">Change Casing</option>
+                                        <option value="REPLACE">Text Replace</option>
+                                        <option value="EXTRACT_REGEX">Regex Extract</option>
+                                        <option value="CASE_TRANSFORM">Case Transform</option>
                                     </select>
                                 </div>
 
-                                <button onClick={() => removeOperation(op.id)} className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-opacity">
+                                <button onClick={() => removeOperation(op.id)} className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-opacity p-1">
                                     <Trash2 className="w-4 h-4" />
                                 </button>
                             </div>
@@ -393,6 +391,7 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
                             {/* Config Body */}
                             {op.enabled && (
                                 <div className="p-4 bg-slate-50/50 dark:bg-slate-900/30 text-sm space-y-3">
+                                    
                                     {op.type === 'ADD' && (
                                     <div className="flex gap-2">
                                         <div className="flex-1">
@@ -417,12 +416,14 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
                                         </div>
                                     </div>
                                     )}
+
                                     {op.type === 'REMOVE' && (
                                     <div>
                                         <label className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Target Key</label>
                                         <Input placeholder="e.g. temp-id" value={op.config.key} onChange={e => updateConfig(op.id, 'key', e.target.value)} className="h-8 text-xs font-mono border-red-200 focus:border-red-500" />
                                     </div>
                                     )}
+
                                     {op.type === 'REPLACE' && (
                                     <div className="flex items-end gap-2">
                                         <div className="flex-1">
@@ -436,96 +437,94 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
                                         </div>
                                     </div>
                                     )}
+
                                     {op.type === 'PATTERN' && (
                                       <div className="space-y-4">
-                                         <div>
-                                           <label className="text-[10px] uppercase font-bold text-slate-400 mb-1 flex justify-between items-center">
-                                              Delimiter
-                                              <span className="text-[9px] text-indigo-500">Auto-Detect available</span>
-                                           </label>
-                                           <div className="flex gap-2">
-                                             {['-', '_', '.', '/'].map(char => (
-                                               <button
-                                                 key={char}
-                                                 onClick={() => updateConfig(op.id, 'delimiter', char)}
-                                                 className={`w-8 h-8 rounded border flex items-center justify-center font-mono text-sm transition-colors
-                                                   ${op.config.delimiter === char ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
-                                               >
-                                                 {char}
-                                               </button>
-                                             ))}
-                                             <Input 
-                                               className="w-12 h-8 text-center font-mono" 
-                                               placeholder="Char" 
-                                               value={op.config.delimiter} 
-                                               onChange={e => updateConfig(op.id, 'delimiter', e.target.value)} 
-                                               maxLength={1}
-                                             />
-                                             <Button 
-                                                size="xs" 
-                                                variant="ghost" 
+                                         {/* Delimiter Selection */}
+                                         <div className="flex justify-between items-end">
+                                            <div>
+                                                <label className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Separator</label>
+                                                <div className="flex gap-1.5">
+                                                    {['-', '_', '.', '/'].map(char => (
+                                                        <button
+                                                            key={char}
+                                                            onClick={() => updateConfig(op.id, 'delimiter', char)}
+                                                            className={`w-8 h-8 rounded border flex items-center justify-center font-mono text-sm transition-all
+                                                            ${op.config.delimiter === char 
+                                                                ? 'bg-blue-600 border-blue-600 text-white shadow-md' 
+                                                                : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
+                                                        >
+                                                            {char}
+                                                        </button>
+                                                    ))}
+                                                    <Input 
+                                                        className="w-10 h-8 text-center font-mono" 
+                                                        placeholder="?" 
+                                                        value={op.config.delimiter} 
+                                                        onChange={e => updateConfig(op.id, 'delimiter', e.target.value)} 
+                                                        maxLength={1}
+                                                    />
+                                                </div>
+                                            </div>
+                                            <Button 
+                                                size="sm" 
+                                                variant="secondary" 
                                                 onClick={() => handleAutoDetect(op.id)}
                                                 disabled={!!analyzingOpId}
-                                                className="h-8 px-2 text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800"
-                                                title="AI Auto-Detect Pattern"
-                                             >
-                                                {analyzingOpId === op.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                                             </Button>
-                                           </div>
+                                                className={`text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 border-indigo-100 dark:border-indigo-800 ${analyzingOpId === op.id ? 'animate-pulse' : ''}`}
+                                            >
+                                                {analyzingOpId === op.id ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Wand2 className="w-3 h-3 mr-1" />}
+                                                Auto-Detect
+                                            </Button>
                                          </div>
 
+                                         {/* Token Visualizer */}
                                          {sampleResource && op.config.delimiter && (
-                                           <div className="bg-slate-100 dark:bg-slate-950/50 p-4 rounded-xl border border-slate-200 dark:border-slate-800 overflow-x-auto relative mt-2">
-                                              <div className="text-[10px] uppercase font-bold text-slate-400 mb-3 flex items-center gap-1">
-                                                <Eye className="w-3 h-3" /> Pattern Preview: <span className="text-slate-600 dark:text-slate-300 normal-case ml-1 font-mono">{sampleResource.name}</span>
+                                           <div className="bg-slate-100 dark:bg-slate-950/60 p-4 rounded-xl border border-slate-200 dark:border-slate-800 overflow-x-auto relative mt-2">
+                                              <div className="text-[10px] uppercase font-bold text-slate-400 mb-4 flex items-center gap-1">
+                                                <Eye className="w-3 h-3" /> Preview: <span className="text-slate-600 dark:text-slate-300 normal-case ml-1 font-mono">{sampleResource.name}</span>
                                               </div>
                                               
-                                              <div className="flex items-start gap-0 relative">
-                                                 {sampleResource.name.split(op.config.delimiter).map((token, idx, arr) => {
+                                              <div className="flex items-start gap-4 pb-2">
+                                                 {sampleResource.name.split(op.config.delimiter).map((token, idx) => {
                                                     const mapping = op.config.mappings?.find(m => m.index === idx);
                                                     const assignedKey = mapping?.targetKey || '';
-                                                    const isLast = idx === arr.length - 1;
                                                     
                                                     return (
-                                                      <div key={idx} className="flex items-center">
-                                                          <div className="flex flex-col items-center gap-2">
-                                                              {/* Token Bubble */}
-                                                              <div className={`
-                                                                 px-3 py-1.5 rounded-full text-xs font-mono font-medium border shadow-sm transition-all relative z-10
-                                                                 ${assignedKey 
-                                                                   ? 'bg-blue-500 text-white border-blue-600 shadow-blue-500/20' 
-                                                                   : 'bg-white dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-700'}
-                                                              `}>
-                                                                 {token}
-                                                              </div>
-                                                              
-                                                              {/* Key Input */}
-                                                              <div className="relative group/line flex flex-col items-center">
-                                                                 <div className={`w-0.5 h-3 mb-1 transition-colors ${assignedKey ? 'bg-blue-400' : 'bg-slate-200 dark:bg-slate-700'}`}></div>
-                                                                 <Input 
-                                                                    placeholder={`Pos ${idx}`} 
-                                                                    value={assignedKey}
-                                                                    className={`
-                                                                        h-6 text-[10px] text-center px-1 w-20 shadow-sm transition-all
-                                                                        ${assignedKey 
-                                                                            ? 'border-blue-300 focus:border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-bold' 
-                                                                            : 'text-slate-400 border-slate-200 dark:border-slate-700'}
-                                                                    `}
-                                                                    onChange={(e) => {
-                                                                       const val = e.target.value;
-                                                                       const newMappings = op.config.mappings?.filter(m => m.index !== idx) || [];
-                                                                       if (val) newMappings.push({ index: idx, targetKey: val });
-                                                                       updateConfig(op.id, 'mappings', newMappings);
-                                                                    }}
-                                                                    error={assignedKey ? validateKey(assignedKey) || undefined : undefined}
-                                                                 />
-                                                              </div>
+                                                      <div key={idx} className="flex flex-col items-center gap-2 group/token relative">
+                                                          {/* Token Bubble */}
+                                                          <div className={`
+                                                             px-3 py-1.5 rounded-md text-xs font-mono font-medium border shadow-sm transition-all z-10 min-w-[40px] text-center
+                                                             ${assignedKey 
+                                                               ? 'bg-blue-500 text-white border-blue-600 shadow-blue-500/20' 
+                                                               : 'bg-white dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700'}
+                                                          `}>
+                                                             {token}
                                                           </div>
                                                           
-                                                          {/* Connector Line */}
-                                                          {!isLast && (
-                                                              <div className="w-6 h-0.5 bg-slate-300 dark:bg-slate-700 -mt-10 mx-1"></div>
-                                                          )}
+                                                          {/* Visual Connector */}
+                                                          <div className={`h-4 w-px transition-colors ${assignedKey ? 'bg-blue-400' : 'bg-slate-300 dark:bg-slate-700'}`}></div>
+                                                          
+                                                          {/* Input */}
+                                                          <Input 
+                                                            placeholder={`Key...`} 
+                                                            value={assignedKey}
+                                                            className={`
+                                                                h-7 text-[10px] text-center px-1 w-24 shadow-sm transition-all font-mono
+                                                                ${assignedKey 
+                                                                    ? 'border-blue-400 focus:border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-bold' 
+                                                                    : 'text-slate-400 border-slate-200 dark:border-slate-700 opacity-70 focus:opacity-100'}
+                                                            `}
+                                                            onChange={(e) => {
+                                                               const val = e.target.value;
+                                                               const newMappings = op.config.mappings?.filter(m => m.index !== idx) || [];
+                                                               if (val) newMappings.push({ index: idx, targetKey: val });
+                                                               updateConfig(op.id, 'mappings', newMappings);
+                                                            }}
+                                                          />
+                                                          
+                                                          {/* Position Label */}
+                                                          <span className="text-[9px] text-slate-300 dark:text-slate-600 absolute -top-3">#{idx}</span>
                                                       </div>
                                                     );
                                                  })}
@@ -534,6 +533,7 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
                                          )}
                                       </div>
                                     )}
+
                                     {op.type === 'EXTRACT_REGEX' && (
                                     <div className="space-y-3">
                                         <div>
@@ -553,6 +553,7 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
                                         </div>
                                     </div>
                                     )}
+
                                     {op.type === 'CASE_TRANSFORM' && (
                                     <div className="flex gap-2">
                                         <button onClick={() => updateConfig(op.id, 'casing', 'lowercase')} className={`flex-1 py-1 text-xs border rounded ${op.config.casing === 'lowercase' ? 'bg-blue-100 border-blue-300 text-blue-700' : 'bg-white border-slate-200'}`}>lowercase</button>
@@ -575,8 +576,8 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
 
                     {/* Add Button Area */}
                     <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 grid grid-cols-2 gap-2">
-                        <Button size="sm" variant="secondary" onClick={() => addOperation('ADD')} leftIcon={<Plus className="w-3 h-3"/>}>Add Label</Button>
-                        <Button size="sm" variant="secondary" onClick={() => addOperation('PATTERN')} leftIcon={<Scissors className="w-3 h-3"/>}>Split Pattern</Button>
+                        <Button size="sm" variant="secondary" onClick={() => addOperation('PATTERN')} leftIcon={<Split className="w-3 h-3"/>}>Split Pattern</Button>
+                        <Button size="sm" variant="secondary" onClick={() => addOperation('ADD')} leftIcon={<Plus className="w-3 h-3"/>}>Static Label</Button>
                         <Button size="sm" variant="secondary" onClick={() => addOperation('REPLACE')} leftIcon={<Replace className="w-3 h-3"/>}>Normalize</Button>
                         <Button size="sm" variant="secondary" onClick={() => addOperation('REMOVE')} leftIcon={<Eraser className="w-3 h-3"/>} className="text-red-600 hover:bg-red-50">Cleanup</Button>
                     </div>
@@ -604,56 +605,65 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
                         
                         {Array.from(previewData.entries()).map(([id, data]) => {
                             const resName = selectedResources.find(r => r.id === id)?.name || id;
+                            const hasChanges = data.diff.length > 0;
+
                             return (
                                 <motion.div layoutId={id} key={id} className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-                                    <div className="px-4 py-2 bg-slate-50 dark:bg-slate-950 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+                                    <div className="px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
                                         <div className="flex items-center gap-2">
+                                            <div className={`w-1.5 h-1.5 rounded-full ${hasChanges ? 'bg-indigo-500' : 'bg-slate-300'}`}></div>
                                             <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{resName}</span>
                                             {selectedResources.find(r => r.id === id)?.type === 'INSTANCE' && <Badge variant="info" className="px-1 py-0 text-[9px]">VM</Badge>}
                                         </div>
                                         <span className="text-[10px] font-mono text-slate-400">{id}</span>
                                     </div>
-                                    <div className="p-3 flex items-start gap-4 text-xs">
-                                        {/* Before */}
-                                        <div className="flex-1 space-y-1">
-                                            <div className="text-[10px] uppercase font-bold text-slate-300 mb-1">Before</div>
-                                            {Object.keys(data.original).length === 0 && <span className="text-slate-300 italic">No labels</span>}
-                                            {Object.entries(data.original).map(([k, v]) => (
-                                                <div key={k} className="flex gap-1 font-mono text-slate-500">
-                                                    <span>{k}:</span><span className="text-slate-700 dark:text-slate-400">{v}</span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                        
-                                        <div className="self-stretch w-px bg-slate-100 dark:bg-slate-800"></div>
-
-                                        {/* Diff View */}
-                                        <div className="flex-[1.5] space-y-1">
-                                            <div className="text-[10px] uppercase font-bold text-slate-300 mb-1">Pending Changes</div>
-                                            {data.diff.map((d, i) => (
-                                                <div key={i} className={`flex items-center gap-2 p-1 rounded font-mono ${d.type === 'ADD' ? 'bg-emerald-50 dark:bg-emerald-900/20' : d.type === 'REMOVE' ? 'bg-red-50 dark:bg-red-900/20' : 'bg-amber-50 dark:bg-amber-900/20'}`}>
-                                                    {d.type === 'ADD' && <Plus className="w-3 h-3 text-emerald-500" />}
-                                                    {d.type === 'REMOVE' && <Trash2 className="w-3 h-3 text-red-500" />}
-                                                    {d.type === 'MODIFY' && <RefreshCw className="w-3 h-3 text-amber-500" />}
-                                                    
-                                                    <span className="font-bold text-slate-700 dark:text-slate-200">{d.key}:</span>
-                                                    
-                                                    {d.type === 'MODIFY' ? (
-                                                        <span className="flex items-center gap-1">
-                                                            <span className="line-through opacity-50">{d.oldVal}</span>
-                                                            <ArrowRight className="w-3 h-3 opacity-50" />
-                                                            <span className="font-bold">{d.newVal}</span>
+                                    
+                                    {hasChanges ? (
+                                        <div className="p-0 grid grid-cols-2 divide-x divide-slate-100 dark:divide-slate-800">
+                                            {/* Original */}
+                                            <div className="p-3 space-y-2 bg-slate-50/30 dark:bg-slate-900/30">
+                                                <div className="text-[9px] uppercase font-bold text-slate-400 mb-1">Original</div>
+                                                {Object.entries(data.original).length === 0 && <span className="text-xs text-slate-400 italic">No labels</span>}
+                                                <div className="flex flex-wrap gap-1.5">
+                                                    {Object.entries(data.original).map(([k, v]) => (
+                                                        <span key={k} className="inline-flex px-1.5 py-0.5 rounded text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
+                                                            <span className="font-semibold mr-1">{k}:</span>{v}
                                                         </span>
-                                                    ) : d.type === 'REMOVE' ? (
-                                                        <span className="line-through opacity-50">{d.oldVal}</span>
-                                                    ) : (
-                                                        <span className="font-bold">{d.newVal}</span>
-                                                    )}
+                                                    ))}
                                                 </div>
-                                            ))}
-                                            {data.diff.length === 0 && <span className="text-slate-300 italic">No changes</span>}
+                                            </div>
+
+                                            {/* Changes */}
+                                            <div className="p-3 space-y-2 bg-white dark:bg-slate-900">
+                                                <div className="text-[9px] uppercase font-bold text-slate-400 mb-1">Updates</div>
+                                                <div className="space-y-1.5">
+                                                    {data.diff.map((d, i) => (
+                                                        <div key={i} className={`flex items-center gap-2 text-xs p-1.5 rounded border ${d.type === 'ADD' ? 'bg-emerald-50 border-emerald-100 text-emerald-800 dark:bg-emerald-900/20 dark:border-emerald-900/30 dark:text-emerald-300' : d.type === 'REMOVE' ? 'bg-red-50 border-red-100 text-red-800 dark:bg-red-900/20 dark:border-red-900/30 dark:text-red-300' : 'bg-amber-50 border-amber-100 text-amber-800 dark:bg-amber-900/20 dark:border-amber-900/30 dark:text-amber-300'}`}>
+                                                            {d.type === 'ADD' && <Plus className="w-3 h-3" />}
+                                                            {d.type === 'REMOVE' && <Trash2 className="w-3 h-3" />}
+                                                            {d.type === 'MODIFY' && <RefreshCw className="w-3 h-3" />}
+                                                            
+                                                            <span className="font-bold font-mono">{d.key}:</span>
+                                                            
+                                                            {d.type === 'MODIFY' ? (
+                                                                <div className="flex items-center gap-1.5">
+                                                                    <span className="line-through opacity-50">{d.oldVal}</span>
+                                                                    <ArrowRight className="w-3 h-3 opacity-50" />
+                                                                    <span className="font-bold">{d.newVal}</span>
+                                                                </div>
+                                                            ) : d.type === 'REMOVE' ? (
+                                                                <span className="line-through opacity-70">{d.oldVal}</span>
+                                                            ) : (
+                                                                <span className="font-bold">{d.newVal}</span>
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
                                         </div>
-                                    </div>
+                                    ) : (
+                                        <div className="p-4 text-center text-xs text-slate-400 italic">No changes pending for this resource.</div>
+                                    )}
                                 </motion.div>
                             );
                         })}
@@ -666,9 +676,10 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
         {/* --- REVIEW MODE --- */}
         {viewMode === 'REVIEW' && (
             <div className="flex-1 bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-8 animate-in zoom-in-95 duration-300">
+                {/* Reused Review UI from previous version, kept concise */}
                 <div className="max-w-2xl w-full bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 p-8 text-center">
                     <div className="w-16 h-16 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-full flex items-center justify-center mx-auto mb-6">
-                        <SaveAll className="w-8 h-8" />
+                        <Check className="w-8 h-8" />
                     </div>
                     
                     <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">Confirm Label Updates</h2>
@@ -693,13 +704,12 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
                     </div>
 
                     <div className="flex items-center justify-center gap-4">
-                        <Button variant="ghost" size="lg" onClick={() => setViewMode('BUILD')} leftIcon={<Undo className="w-4 h-4"/>}>Back to Edit</Button>
+                        <Button variant="ghost" size="lg" onClick={() => setViewMode('BUILD')}>Back to Edit</Button>
                         <Button 
                             variant="primary" 
                             size="lg" 
                             className="px-8 shadow-xl shadow-indigo-500/30"
                             onClick={handleApply}
-                            leftIcon={<Check className="w-5 h-5"/>}
                         >
                             Commit Changes
                         </Button>
@@ -713,7 +723,7 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
             <div className="h-20 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-8 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-2 text-sm text-slate-500">
                     <InfoTip icon={Lightbulb}>
-                        Tip: Drag operations to reorder execution priority.
+                        Use <strong className="font-mono bg-slate-100 dark:bg-slate-800 px-1 rounded">Split Pattern</strong> to quickly parse naming conventions.
                     </InfoTip>
                 </div>
                 <div className="flex gap-4">

@@ -7,7 +7,6 @@ import {
   Globe, LayoutGrid, Zap, TrendingUp, HelpCircle
 } from 'lucide-react';
 import { Card, Tooltip, Badge } from './DesignSystem';
-import { SparkLine } from './Visualizations';
 import { QUOTA_DESCRIPTIONS } from '../constants';
 import { motion } from 'framer-motion';
 
@@ -227,22 +226,6 @@ export const QuotaVisuals: React.FC<QuotaVisualsProps> = ({ quotas, isLoading })
 };
 
 const QuotaCard = ({ quota }: { quota: QuotaEntry }) => {
-    // Generate mock historical data based on current usage
-    const historyData = useMemo(() => {
-      // Create 7 points ending at current usage
-      const trend = [];
-      const base = quota.usage;
-      for (let i = 6; i > 0; i--) {
-        // Fluctuate between -30% and +10% of current base, clamped to limit
-        const randomFactor = 0.7 + Math.random() * 0.4;
-        let val = base * randomFactor;
-        if (val > quota.limit) val = quota.limit;
-        trend.push(val);
-      }
-      trend.push(base); // Current value is last
-      return trend;
-    }, [quota.usage, quota.limit]);
-
     // Advanced Risk Styling
     const isCritical = quota.percentage >= 100;
     const isHighRisk = quota.percentage >= 80 && !isCritical;
@@ -250,18 +233,15 @@ const QuotaCard = ({ quota }: { quota: QuotaEntry }) => {
     let containerClasses = 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800';
     let progressColor = 'bg-emerald-500 shadow-emerald-500/20';
     let textColor = 'text-emerald-600 dark:text-emerald-400';
-    let sparkColor = '#10b981'; // emerald-500
 
     if (isCritical) {
         containerClasses = 'bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-900/50 shadow-md shadow-red-500/10 border-l-4 border-l-red-500';
         progressColor = 'bg-red-500 shadow-red-500/40 animate-pulse';
         textColor = 'text-red-600 dark:text-red-400';
-        sparkColor = '#ef4444'; // red-500
     } else if (isHighRisk) {
         containerClasses = 'bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900/50 shadow-sm border-l-4 border-l-amber-500';
         progressColor = 'bg-amber-500 shadow-amber-500/30';
         textColor = 'text-amber-600 dark:text-amber-400';
-        sparkColor = '#f59e0b'; // amber-500
     }
 
     const formattedMetric = quota.metric.replace(/_/g, ' ').replace('QUOTA', '').trim();
@@ -318,14 +298,6 @@ const QuotaCard = ({ quota }: { quota: QuotaEntry }) => {
                    <span className="text-lg font-bold text-slate-700 dark:text-slate-200 leading-none">{quota.usage.toLocaleString()}</span>
                 </div>
                 
-                {/* Trend Chart (Middle) */}
-                <div className="flex-1 mx-4 h-8 flex flex-col justify-end items-center opacity-50 hover:opacity-100 transition-opacity">
-                   <div className="w-20 h-6">
-                      <SparkLine data={historyData} color={sparkColor} height={24} />
-                   </div>
-                   <span className="text-[8px] uppercase tracking-wider text-slate-400">7d Trend</span>
-                </div>
-
                 <div className="flex flex-col text-right">
                    <span className="text-slate-400 text-[9px] uppercase mb-0.5">Limit</span>
                    <span className="text-lg font-bold text-slate-700 dark:text-slate-200 leading-none">{quota.limit.toLocaleString()}</span>

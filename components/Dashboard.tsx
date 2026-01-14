@@ -8,10 +8,10 @@ import {
   Cloud, Database, 
   CheckCircle2, AlertOctagon, Terminal,
   Bot, RefreshCw, DollarSign, Box,
-  TrendingUp, TrendingDown, Layers, Ship,
-  Lock, Wallet, Cpu, Activity, Info
+  Layers, Ship,
+  Lock, Wallet, Cpu, Info
 } from 'lucide-react';
-import { DonutChart, SparkLine, AnimatedCounter } from './Visualizations';
+import { DonutChart, AnimatedCounter } from './Visualizations';
 import { useDashboardAnalytics } from '../hooks/useDashboardAnalytics';
 import { RegionIcon } from './RegionIcon';
 import { motion, AnimatePresence, Variants } from 'framer-motion';
@@ -29,20 +29,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ resources, stats, onNaviga
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [isGeneratingInsight, setIsGeneratingInsight] = useState(false);
 
-  // --- Derived Metrics for UI ---
-  
-  const wasteScore = useMemo(() => {
-    const total = resources.length || 1;
-    const waste = analysis.stoppedInstances.length;
-    return Math.max(0, 100 - Math.round((waste / total) * 200)); 
-  }, [resources.length, analysis.stoppedInstances.length]);
-
-  const securityScore = useMemo(() => {
-    const total = resources.length || 1;
-    const exposed = analysis.publicIpCount;
-    return Math.max(0, 100 - Math.round((exposed / total) * 150));
-  }, [resources.length, analysis.publicIpCount]);
-
+  // --- Derived Metrics ---
   const potentialSavings = useMemo(() => {
     let wastedDiskGb = 0;
     analysis.stoppedInstances.forEach(vm => {
@@ -56,16 +43,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ resources, stats, onNaviga
     };
   }, [analysis.stoppedInstances]);
 
-  // --- Resource Categorization for Charts ---
-  // Improved granular breakdown for Enterprise visibility
   const resourceDistribution = useMemo(() => [
-    { label: 'Virtual Machines', value: analysis.vmCount, color: '#3b82f6' }, // blue-500
-    { label: 'GKE Clusters', value: analysis.gkeCount, color: '#0ea5e9' }, // sky-500
-    { label: 'Cloud Run', value: analysis.cloudRunCount, color: '#6366f1' }, // indigo-500
-    { label: 'Cloud SQL', value: analysis.sqlCount, color: '#06b6d4' }, // cyan-500
-    { label: 'Persistent Disks', value: analysis.diskCount, color: '#a855f7' }, // purple-500
-    { label: 'Cloud Storage', value: analysis.bucketCount, color: '#eab308' }, // yellow-500
-    { label: 'Images & Snapshots', value: analysis.imageCount + analysis.snapshotCount, color: '#f59e0b' }, // amber-500
+    { label: 'VMs', value: analysis.vmCount, color: '#3b82f6' }, // blue-500
+    { label: 'K8s', value: analysis.gkeCount, color: '#0ea5e9' }, // sky-500
+    { label: 'Run', value: analysis.cloudRunCount, color: '#6366f1' }, // indigo-500
+    { label: 'SQL', value: analysis.sqlCount, color: '#06b6d4' }, // cyan-500
+    { label: 'Disks', value: analysis.diskCount, color: '#a855f7' }, // purple-500
+    { label: 'Storage', value: analysis.bucketCount, color: '#eab308' }, // yellow-500
   ].filter(x => x.value > 0).sort((a, b) => b.value - a.value), [analysis]);
 
   const handleGenerateInsights = async () => {
@@ -118,7 +102,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ resources, stats, onNaviga
              <Badge variant="neutral" className="bg-white/50 dark:bg-slate-800/50 backdrop-blur-md border-slate-200 dark:border-slate-700">
                 <Globe className="w-3 h-3 mr-1" /> Global Fleet
              </Badge>
-             <span className="text-xs text-slate-400">Updated just now</span>
+             <span className="text-xs text-slate-400">Live Inventory</span>
           </div>
           <h1 className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
             Cloud Overview
@@ -130,46 +114,104 @@ export const Dashboard: React.FC<DashboardProps> = ({ resources, stats, onNaviga
         </div>
       </motion.div>
       
-      {/* 2. Primary KPI Grid */}
+      {/* 2. Primary KPI Grid - Real Data Only */}
       <motion.div variants={itemVars} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-         <MetricCard 
-            title="Total Resources"
-            value={stats.total}
-            icon={Layers}
-            trend="+12%"
-            trendUp={true}
-            color="indigo"
-            chartData={[10, 15, 12, 18, 20, 25, stats.total]}
-         />
-         <MetricCard 
-            title="Est. Monthly Waste"
-            value={`$${potentialSavings.monthly.toFixed(0)}`}
-            icon={Wallet}
-            trend="Needs Review"
-            trendUp={false}
-            color="rose"
-            chartData={[50, 45, 60, 55, 80, 70, potentialSavings.monthly]}
-            isCurrency
-            info="Calculated based on standard on-demand pricing for resources in STOPPED state (Idle VMs + Attached Storage + Unused IPs)."
-         />
-         <MetricCard 
-            title="Governance Score"
-            value={`${analysis.complianceRate}%`}
-            icon={Shield}
-            trend={analysis.complianceRate >= 90 ? "Stable" : "Improving"}
-            trendUp={true}
-            color={analysis.complianceRate >= 90 ? "emerald" : "amber"}
-            chartData={[80, 82, 85, 84, 88, 89, analysis.complianceRate]}
-         />
-         <MetricCard 
-            title="Active Alerts"
-            value={analysis.stoppedInstances.length + analysis.publicIpCount}
-            icon={AlertOctagon}
-            trend={analysis.publicIpCount > 0 ? "Security Risk" : "Low Risk"}
-            trendUp={false}
-            color={analysis.publicIpCount > 0 ? "orange" : "blue"}
-            chartData={[2, 5, 3, 8, 4, 6, analysis.stoppedInstances.length + analysis.publicIpCount]}
-         />
+         
+         {/* Total Resources with Composition Bar */}
+         <GlassCard className="p-5 overflow-visible relative group">
+             <div className="flex justify-between items-start mb-4">
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Total Resources</p>
+                <div className="p-2 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg text-indigo-600 dark:text-indigo-400">
+                   <Layers className="w-5 h-5" />
+                </div>
+             </div>
+             <div className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight mb-4">
+                <AnimatedCounter value={stats.total} />
+             </div>
+             {/* Mini Stacked Bar */}
+             <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden flex">
+                {resourceDistribution.map((item, idx) => (
+                   <div key={idx} className="h-full" style={{ width: `${(item.value / stats.total) * 100}%`, backgroundColor: item.color }} />
+                ))}
+             </div>
+             <div className="mt-2 flex justify-between text-[10px] text-slate-400">
+                <span>{resourceDistribution[0]?.label || 'Resources'}</span>
+                <span>{Math.round((resourceDistribution[0]?.value / stats.total) * 100) || 0}%</span>
+             </div>
+         </GlassCard>
+
+         {/* Est. Waste with Source Breakdown */}
+         <GlassCard className="p-5 overflow-visible relative group">
+             <div className="flex justify-between items-start mb-4">
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Est. Monthly Waste</p>
+                <div className="p-2 bg-rose-50 dark:bg-rose-900/20 rounded-lg text-rose-600 dark:text-rose-400">
+                   <Wallet className="w-5 h-5" />
+                </div>
+             </div>
+             <div className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight mb-4 tabular-nums">
+                $<AnimatedCounter value={potentialSavings.monthly.toFixed(0)} />
+             </div>
+             <div className="flex gap-2 text-[10px]">
+                <Badge variant="error" className="px-1.5">{analysis.stoppedInstances.length} Idle VMs</Badge>
+                <Badge variant="warning" className="px-1.5">{potentialSavings.wastedGb}GB Unused</Badge>
+             </div>
+         </GlassCard>
+
+         {/* Compliance Score with Gauge */}
+         <GlassCard className="p-5 overflow-visible relative group">
+             <div className="flex justify-between items-start">
+                <div className="flex-1">
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-4">Governance Score</p>
+                    <div className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight mb-1">
+                        <AnimatedCounter value={analysis.complianceRate} />%
+                    </div>
+                    <div className="text-[10px] text-slate-400">{stats.labeled} of {stats.total} labeled</div>
+                </div>
+                <div className="relative w-16 h-16 flex items-center justify-center">
+                    <svg className="transform -rotate-90 w-full h-full" viewBox="0 0 100 100">
+                        <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="8" fill="transparent" className="text-slate-100 dark:text-slate-800" />
+                        <motion.circle 
+                        cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="8" fill="transparent" 
+                        strokeDasharray={2 * Math.PI * 40} 
+                        initial={{ strokeDashoffset: 2 * Math.PI * 40 }}
+                        animate={{ strokeDashoffset: 2 * Math.PI * 40 - (analysis.complianceRate / 100) * 2 * Math.PI * 40 }}
+                        transition={{ duration: 1.5, ease: "easeOut" }}
+                        className={analysis.complianceRate >= 90 ? 'text-emerald-500' : 'text-amber-500'}
+                        />
+                    </svg>
+                </div>
+             </div>
+         </GlassCard>
+
+         {/* Active Alerts */}
+         <GlassCard className="p-5 overflow-visible relative group">
+             <div className="flex justify-between items-start mb-4">
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Active Risks</p>
+                <div className="p-2 bg-amber-50 dark:bg-amber-900/20 rounded-lg text-amber-600 dark:text-amber-400">
+                   <AlertOctagon className="w-5 h-5" />
+                </div>
+             </div>
+             <div className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight mb-4">
+                <AnimatedCounter value={analysis.publicIpCount + analysis.stoppedInstances.length} />
+             </div>
+             <div className="flex flex-col gap-1">
+                {analysis.publicIpCount > 0 && (
+                    <div className="flex items-center gap-1.5 text-[10px] text-red-600 dark:text-red-400 font-bold">
+                        <Globe className="w-3 h-3" /> {analysis.publicIpCount} Public IPs Exposed
+                    </div>
+                )}
+                {analysis.stoppedInstances.length > 0 && (
+                    <div className="flex items-center gap-1.5 text-[10px] text-amber-600 dark:text-amber-400 font-medium">
+                        <DollarSign className="w-3 h-3" /> {analysis.stoppedInstances.length} Stopped Instances
+                    </div>
+                )}
+                {analysis.publicIpCount === 0 && analysis.stoppedInstances.length === 0 && (
+                    <div className="flex items-center gap-1.5 text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">
+                        <CheckCircle2 className="w-3 h-3" /> All Systems Nominal
+                    </div>
+                )}
+             </div>
+         </GlassCard>
       </motion.div>
 
       {/* 3. Main Dashboard Layout */}
@@ -180,10 +222,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ resources, stats, onNaviga
             
             {/* Fleet Composition Panel */}
             <motion.div variants={itemVars} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm relative overflow-hidden">
-                <div className="absolute top-0 right-0 p-6 opacity-50">
-                   <Activity className="w-6 h-6 text-slate-200 dark:text-slate-800" />
-                </div>
-                
                 <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-6 flex items-center gap-2">
                    <Server className="w-5 h-5 text-indigo-500" /> Fleet Composition
                 </h3>
@@ -208,9 +246,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ resources, stats, onNaviga
                          <DetailRow label="Cloud SQL Instances" count={analysis.sqlCount} total={stats.total} color="bg-cyan-500" icon={Database} />
                          <DetailRow label="Persistent Disks" count={analysis.diskCount} total={stats.total} color="bg-purple-500" icon={HardDrive} />
                          <DetailRow label="Cloud Storage Buckets" count={analysis.bucketCount} total={stats.total} color="bg-yellow-500" icon={Box} />
-                         {(analysis.imageCount + analysis.snapshotCount) > 0 && (
-                            <DetailRow label="Images & Snapshots" count={analysis.imageCount + analysis.snapshotCount} total={stats.total} color="bg-amber-500" icon={Layers} />
-                         )}
                       </div>
                    </div>
                 </div>
@@ -398,62 +433,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ resources, stats, onNaviga
       </div>
     </motion.div>
   );
-};
-
-// --- Subcomponents ---
-
-const MetricCard = ({ title, value, icon: Icon, trend, trendUp, color, chartData, isCurrency, info }: any) => {
-   const colorStyles: any = {
-      indigo: 'text-indigo-600 bg-indigo-50 dark:text-indigo-400 dark:bg-indigo-900/20',
-      emerald: 'text-emerald-600 bg-emerald-50 dark:text-emerald-400 dark:bg-emerald-900/20',
-      amber: 'text-amber-600 bg-amber-50 dark:text-amber-400 dark:bg-amber-900/20',
-      rose: 'text-rose-600 bg-rose-50 dark:text-rose-400 dark:bg-rose-900/20',
-      blue: 'text-blue-600 bg-blue-50 dark:text-blue-400 dark:bg-blue-900/20',
-      orange: 'text-orange-600 bg-orange-50 dark:text-orange-400 dark:bg-orange-900/20',
-   };
-
-   return (
-      <GlassCard className="p-0 relative !overflow-visible group hover:ring-2 hover:ring-indigo-500/20 transition-all duration-300">
-         {/* Decoration Container - Clipped to radius */}
-         <div className="absolute inset-0 overflow-hidden rounded-xl pointer-events-none">
-             <div className={`absolute -right-6 -bottom-6 w-24 h-24 rounded-full opacity-0 group-hover:opacity-10 transition-opacity duration-500 blur-2xl ${colorStyles[color].split(' ')[1]}`}></div>
-         </div>
-
-         {/* Content - Visible Overflow for Tooltip */}
-         <div className="p-5 relative z-10">
-             <div className="flex justify-between items-start">
-                <div className="flex items-center gap-1.5">
-                   <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">{title}</p>
-                   {info && (
-                      <Tooltip content={info} placement="bottom">
-                         <Info className="w-3 h-3 text-slate-400 hover:text-indigo-500 cursor-help transition-colors" />
-                      </Tooltip>
-                   )}
-                </div>
-                <div className={`p-2.5 rounded-xl ${colorStyles[color]} transition-transform group-hover:scale-110`}>
-                   <Icon className="w-5 h-5" />
-                </div>
-             </div>
-             
-             <div className="mt-1 relative">
-                <h3 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-                   <AnimatedCounter value={value} />
-                </h3>
-             </div>
-             
-             <div className="mt-4 flex items-end justify-between relative">
-                <div className={`flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full ${trendUp ? 'text-emerald-600 bg-emerald-100 dark:bg-emerald-900/30' : 'text-slate-500 bg-slate-100 dark:bg-slate-800'}`}>
-                   {trendUp ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                   {trend}
-                </div>
-                {/* Mini Sparkline */}
-                <div className="w-20 h-8 opacity-50 group-hover:opacity-100 transition-opacity">
-                   <SparkLine data={chartData} color={trendUp ? '#10b981' : '#64748b'} height={32} />
-                </div>
-             </div>
-         </div>
-      </GlassCard>
-   );
 };
 
 const DetailRow = ({ label, count, total, color, icon: Icon }: any) => {

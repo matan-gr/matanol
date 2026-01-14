@@ -16,13 +16,14 @@ export const useResourceManager = (
   const [loadingStatus, setLoadingStatus] = useState({ progress: 0, message: 'Ready' });
   const [isAnalysing, setIsAnalysing] = useState(false);
   const [report, setReport] = useState<string>('');
-  const [batchProgress, setBatchProgress] = useState<{ processed: number, total: number } | null>(null);
+  
+  // Enhanced Batch Progress State
+  const [batchProgress, setBatchProgress] = useState<{ processed: number, total: number, status: 'updating' | 'rolling-back' } | null>(null);
   
   const [taxonomy, setTaxonomy] = useState<TaxonomyRule[]>(DEFAULT_TAXONOMY);
   const [activePolicies, setActivePolicies] = useState<GovernancePolicy[]>(getPolicies(DEFAULT_TAXONOMY));
 
   const currentCredentials = useRef<GcpCredentials | null>(null);
-  // Ref for temporary storage of incoming stream data to debounce re-renders
   const pendingResources = useRef<GceResource[]>([]);
 
   // Derived state with memoization
@@ -40,7 +41,7 @@ export const useResourceManager = (
     setIsConnecting(true);
     setLoadingStatus({ progress: 5, message: 'Authenticating...' });
     setResources([]); 
-    pendingResources.current = []; // Clear buffer
+    pendingResources.current = []; 
     currentCredentials.current = credentials;
     
     try {
@@ -49,15 +50,11 @@ export const useResourceManager = (
 
       setLoadingStatus({ progress: 20, message: 'Starting Resource Discovery...' });
       
-      // STREAMING IMPLEMENTATION
       await fetchAllResources(
         credentials.projectId, 
         credentials.accessToken,
         (newChunk, source) => {
-           // Buffer the data
            pendingResources.current = [...pendingResources.current, ...newChunk];
-           
-           // Immediate feedback in status bar, but debounce the heavy React render
            setLoadingStatus(prev => ({
                progress: Math.min(95, prev.progress + 5),
                message: `Discovered ${pendingResources.current.length} resources (${source})...`
@@ -65,7 +62,6 @@ export const useResourceManager = (
         }
       );
       
-      // Flush remaining buffer
       setResources(pendingResources.current);
       setLoadingStatus({ progress: 100, message: 'Inventory Synced.' });
       
@@ -86,17 +82,13 @@ export const useResourceManager = (
     }
   }, [addLog, addNotification]);
 
-  // Debounce Effect: Updates the main 'resources' state from the 'pendingResources' ref
-  // This prevents UI freezing when thousands of resources arrive in rapid chunks.
   useEffect(() => {
     if (!isConnecting) return;
-
     const interval = setInterval(() => {
         if (pendingResources.current.length > resources.length) {
             setResources([...pendingResources.current]);
         }
-    }, 500); // Update UI max every 500ms during load
-
+    }, 500); 
     return () => clearInterval(interval);
   }, [isConnecting, resources.length]);
 
@@ -110,14 +102,11 @@ export const useResourceManager = (
     setIsConnecting(true);
     setLoadingStatus({ progress: 10, message: 'Loading Demo Environment...' });
     currentCredentials.current = { projectId: 'demo-mode', accessToken: 'demo-mode' };
-    
-    await new Promise(r => setTimeout(r, 800)); // Simulate network
-    
-    const demoResources = generateMockResources(150); // Increased for enterprise feel
+    await new Promise(r => setTimeout(r, 800)); 
+    const demoResources = generateMockResources(150); 
     setResources(demoResources);
     setLoadingStatus({ progress: 100, message: 'Demo Ready' });
     setIsConnecting(false);
-    
     return true;
   }, []);
 
@@ -132,12 +121,11 @@ export const useResourceManager = (
     addNotification('AI Auditor initiated. Scanning inventory...', 'info');
     
     try {
-      const unlabeled = resources.filter(r => Object.keys(r.labels).length === 0).slice(0, 50); // Analyze top 50 to save tokens
+      const unlabeled = resources.filter(r => Object.keys(r.labels).length === 0).slice(0, 50); 
       
       if (unlabeled.length === 0) {
         addNotification('Inventory is fully labeled. Generating report only.', 'info');
       } else {
-        // Only run detailed analysis if there are unlabeled items
         const results = await analyzeResourceBatch(unlabeled);
         setResources(prev => prev.map(res => {
             const match = results.find(r => r.resourceId === res.id);
@@ -166,7 +154,6 @@ export const useResourceManager = (
     const resource = resources.find(r => r.id === resourceId);
     if (!resource) return;
 
-    // Optimistic UI Update
     setResources(prev => prev.map(r => r.id === resourceId ? { ...r, isUpdating: true } : r));
 
     try {
@@ -205,7 +192,7 @@ export const useResourceManager = (
   }, [resources, addNotification]);
 
   /**
-   * Atomic Bulk Update with Rollback Support
+   * Atomic Bulk Update with Robust Rollback
    */
   const bulkUpdateLabels = useCallback(async (
     credentials: GcpCredentials,
@@ -214,7 +201,7 @@ export const useResourceManager = (
      const idsToUpdate = Array.from(updates.keys());
      const count = idsToUpdate.length;
      
-     // Snapshot original state for rollback capability
+     // Snapshot original state
      const originalStates = new Map<string, Record<string, string>>();
      resources.forEach(r => {
          if (updates.has(r.id)) {
@@ -222,26 +209,25 @@ export const useResourceManager = (
          }
      });
 
-     // 1. Mark all as updating (Optimistic Visuals)
+     // 1. Optimistic UI update (Loading state only)
      setResources(prev => prev.map(r => updates.has(r.id) ? { ...r, isUpdating: true } : r));
-     setBatchProgress({ processed: 0, total: count });
+     setBatchProgress({ processed: 0, total: count, status: 'updating' });
 
      const successfulUpdates: string[] = [];
-     let errorOccurred = null;
+     let errorOccurred: Error | null = null;
 
-     // 2. Process sequentially in chunks to allow stopping on error
+     // 2. Sequential Processing in Batches
      const BATCH_SIZE = 5; 
      
      for (let i = 0; i < count; i += BATCH_SIZE) {
          if (errorOccurred) break;
 
          const chunkIds = idsToUpdate.slice(i, i + BATCH_SIZE);
+         
          const promises = chunkIds.map(async (id) => {
-             if (errorOccurred) return; 
-
              const res = resources.find(r => r.id === id);
              const labels = updates.get(id);
-             if (!res || !labels) return;
+             if (!res || !labels) return { id, status: 'skipped' };
 
              try {
                  if (credentials.accessToken !== 'demo-mode') {
@@ -249,28 +235,47 @@ export const useResourceManager = (
                  } else {
                      await new Promise(r => setTimeout(r, 100)); 
                  }
-                 successfulUpdates.push(id);
+                 return { id, status: 'fulfilled' };
              } catch (e: any) {
-                 errorOccurred = e;
-                 throw e; 
+                 return { id, status: 'rejected', reason: e };
              }
          });
 
-         try {
-             await Promise.all(promises);
-             setBatchProgress({ processed: Math.min(i + BATCH_SIZE, count), total: count });
-         } catch (e) {
-             errorOccurred = e;
-             break; 
+         const results = await Promise.all(promises);
+
+         for (const result of results) {
+             if (result.status === 'fulfilled') {
+                 successfulUpdates.push(result.id as string);
+             } else if (result.status === 'rejected') {
+                 errorOccurred = result.reason as Error;
+             }
          }
+
+         setBatchProgress({ processed: Math.min(i + BATCH_SIZE, count), total: count, status: 'updating' });
+         
+         if (errorOccurred) break;
      }
 
      if (errorOccurred) {
          addNotification(`Transaction failed. Rolling back ${successfulUpdates.length} changes...`, 'warning');
-         setBatchProgress({ processed: successfulUpdates.length, total: successfulUpdates.length }); // Indication of rollback work
+         setBatchProgress({ processed: 0, total: successfulUpdates.length, status: 'rolling-back' }); 
 
-         // --- ROLLBACK PHASE ---
-         // We must revert successful updates to their original state to ensure atomicity.
+         // --- ROLLBACK PHASE (Atomic Guarantee) ---
+         let rollbackCount = 0;
+         
+         // Retry helper
+         const retryRollback = async (fn: () => Promise<void>, retries = 3) => {
+            for(let k=0; k<retries; k++) {
+                try {
+                    await fn();
+                    return;
+                } catch(e) {
+                    if (k === retries - 1) throw e;
+                    await new Promise(r => setTimeout(r, 1000 * Math.pow(2, k)));
+                }
+            }
+         };
+
          for (const id of successfulUpdates) {
              const res = resources.find(r => r.id === id);
              const originalLabels = originalStates.get(id);
@@ -278,21 +283,24 @@ export const useResourceManager = (
              if (res && originalLabels) {
                  try {
                      if (credentials.accessToken !== 'demo-mode') {
-                         // IMPORTANT: We must fetch the FRESH resource to get the updated fingerprint 
-                         // caused by the "successful" update we are now undoing.
-                         const freshResource = await fetchResource(credentials.projectId, credentials.accessToken, res);
-                         if (freshResource) {
-                             await updateResourceLabelsApi(credentials.projectId, credentials.accessToken, freshResource, originalLabels);
-                         }
+                         await retryRollback(async () => {
+                             // Fetch fresh fingerprint to avoid 412 Precondition Failed during rollback
+                             const freshResource = await fetchResource(credentials.projectId, credentials.accessToken, res);
+                             if (freshResource) {
+                                 await updateResourceLabelsApi(credentials.projectId, credentials.accessToken, freshResource, originalLabels);
+                             }
+                         });
                      }
+                     rollbackCount++;
+                     setBatchProgress({ processed: rollbackCount, total: successfulUpdates.length, status: 'rolling-back' });
                  } catch (rollbackError) {
                      console.error(`Critical: Failed to rollback resource ${id}`, rollbackError);
-                     addNotification(`Rollback failed for ${res.name}. Manual check required.`, 'error');
+                     addNotification(`Rollback failed for ${res.name}. State inconsistent.`, 'error');
                  }
              }
          }
 
-         // Reset UI state to original (remove isUpdating flag)
+         // Reset UI state to original (remove isUpdating, keep old labels)
          setResources(prev => prev.map(r => {
              if (updates.has(r.id)) {
                  return { ...r, isUpdating: false };
@@ -300,11 +308,11 @@ export const useResourceManager = (
              return r;
          }));
          
-         addNotification('Transaction aborted. All changes reverted.', 'error');
+         addNotification(`Transaction aborted. ${rollbackCount}/${successfulUpdates.length} changes reverted.`, 'error');
 
      } else {
          // --- COMMIT PHASE ---
-         // Success - Update UI and History locally
+         // Update UI state with new labels only after full success
          setResources(prev => prev.map(r => {
              if (updates.has(r.id)) {
                  const newLabels = updates.get(r.id)!;
@@ -331,7 +339,7 @@ export const useResourceManager = (
          addNotification(`Transaction successful. Updated ${count} resources.`, 'success');
      }
 
-     setTimeout(() => setBatchProgress(null), 1000);
+     setTimeout(() => setBatchProgress(null), 1500);
 
   }, [resources, addNotification]);
 

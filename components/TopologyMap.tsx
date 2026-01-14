@@ -1,6 +1,7 @@
 
 import React, { useCallback, useEffect, useState, memo, useMemo } from 'react';
-import ReactFlow, { 
+import { 
+  ReactFlow,
   Background, 
   Controls, 
   useNodesState, 
@@ -12,9 +13,10 @@ import ReactFlow, {
   Panel,
   BackgroundVariant,
   ConnectionLineType,
-  MiniMap
+  MiniMap,
+  type Node,
+  type Edge
 } from 'reactflow';
-import type { Node, Edge } from 'reactflow';
 import dagre from 'dagre';
 import { GceResource } from '../types';
 import { 
