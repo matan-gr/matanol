@@ -92,6 +92,18 @@ const matchesFilter = (r: GceResource, config: FilterConfig, ignoreKey?: keyof F
     }
   }
 
+  // 10. Violations Filter (General)
+  if (config.showViolationsOnly && (!r.violations || r.violations.length === 0)) {
+      return false;
+  }
+
+  // 11. Specific Policy Violation (New)
+  if (config.violatedPolicyId) {
+      if (!r.violations || !r.violations.some(v => v.policyId === config.violatedPolicyId)) {
+          return false;
+      }
+  }
+
   return true;
 };
 

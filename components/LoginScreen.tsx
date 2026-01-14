@@ -3,10 +3,11 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GcpCredentials } from '../types';
 import { APP_NAME, APP_VERSION } from '../constants';
-import { Button, Input, Tooltip } from './DesignSystem';
+import { Button, Input, Modal, Badge } from './DesignSystem';
 import { 
   Tags, ArrowRight, Key, Cloud, Lock, 
-  Activity, CheckCircle2, Zap, ShieldAlert, Info
+  Activity, CheckCircle2, Zap, ShieldAlert, 
+  Shield, Terminal, Copy
 } from 'lucide-react';
 
 interface LoginScreenProps {
@@ -29,12 +30,25 @@ const ConnectionStep = ({ label, active, completed }: { label: string, active: b
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onConnect, isConnecting, loadingStatus, onDemo }) => {
   const [projectId, setProjectId] = useState('');
   const [token, setToken] = useState('');
+  const [showSecurityModal, setShowSecurityModal] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (projectId && token) {
       onConnect({ projectId, accessToken: token });
     }
+  };
+
+  const copyCommand = () => {
+     const cmd = `gcloud iam roles create YallaLabelManager \\
+  --project=${projectId || '$PROJECT_ID'} \\
+  --title="Yalla Label Manager" \\
+  --permissions=compute.instances.list,compute.instances.get,compute.instances.setLabels,compute.disks.list,compute.disks.get,compute.disks.setLabels,storage.buckets.list,storage.buckets.get,storage.buckets.update,logging.logEntries.list,resourcemanager.projects.get,compute.regions.list,run.services.list,run.services.update,container.clusters.list,container.clusters.update`;
+     
+     navigator.clipboard.writeText(cmd);
+     setCopied(true);
+     setTimeout(() => setCopied(false), 2000);
   };
 
   const progress = loadingStatus?.progress || 0;
@@ -141,14 +155,21 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onConnect, isConnectin
                               data-lpignore="true"
                            />
                            
-                           <div className="bg-amber-900/20 border border-amber-900/50 p-3 rounded-lg flex gap-3 items-start">
+                           {/* Enhanced Security Tip Trigger */}
+                           <button 
+                              type="button"
+                              onClick={() => setShowSecurityModal(true)}
+                              className="w-full text-left bg-amber-500/10 border border-amber-500/20 p-3 rounded-lg flex gap-3 items-start hover:bg-amber-500/20 transition-all group"
+                           >
                               <ShieldAlert className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
-                              <div className="text-[10px] text-amber-200/80 leading-relaxed">
-                                 <strong>Security Tip:</strong> Do not use Owner/Editor tokens. Use a custom role with 
-                                 <code className="bg-black/30 px-1 py-0.5 mx-1 rounded text-amber-400 font-mono">compute.instances.setLabels</code> 
-                                 only.
+                              <div className="flex-1">
+                                 <div className="text-xs font-bold text-amber-400 mb-0.5">Recommended: Use Limited Access</div>
+                                 <div className="text-[10px] text-amber-200/60 leading-relaxed group-hover:text-amber-200/80">
+                                    Click to view required IAM permissions for a least-privilege role.
+                                 </div>
                               </div>
-                           </div>
+                              <ArrowRight className="w-3 h-3 text-amber-500/50 mt-1 opacity-0 group-hover:opacity-100 transition-opacity" />
+                           </button>
                         </div>
 
                         <div className="pt-2">
@@ -190,6 +211,66 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onConnect, isConnectin
                </div>
             </div>
          </div>
+
+         {/* Security Modal */}
+         <AnimatePresence>
+            {showSecurityModal && (
+               <Modal 
+                  isOpen={showSecurityModal} 
+                  onClose={() => setShowSecurityModal(false)}
+                  title="Least Privilege Configuration"
+               >
+                  <div className="space-y-6 text-slate-600 dark:text-slate-300">
+                     <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl border border-blue-100 dark:border-blue-900/50 flex gap-3">
+                        <Shield className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0" />
+                        <div>
+                           <h4 className="text-sm font-bold text-blue-900 dark:text-blue-100">Why create a custom role?</h4>
+                           <p className="text-xs text-blue-700 dark:text-blue-300 mt-1 leading-relaxed">
+                              Using 'Owner' or 'Editor' tokens exposes your project to unnecessary risk. 
+                              The <strong>YallaLabelManager</strong> role grants strictly only what is needed to audit and label resources.
+                           </p>
+                        </div>
+                     </div>
+
+                     <div>
+                        <h5 className="text-xs font-bold uppercase text-slate-400 tracking-wider mb-3">Required Permissions</h5>
+                        <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+                           <div className="p-2 bg-slate-50 dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-800 flex items-center gap-2"><CheckCircle2 className="w-3 h-3 text-emerald-500" /> compute.instances.*</div>
+                           <div className="p-2 bg-slate-50 dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-800 flex items-center gap-2"><CheckCircle2 className="w-3 h-3 text-emerald-500" /> compute.disks.*</div>
+                           <div className="p-2 bg-slate-50 dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-800 flex items-center gap-2"><CheckCircle2 className="w-3 h-3 text-emerald-500" /> storage.buckets.*</div>
+                           <div className="p-2 bg-slate-50 dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-800 flex items-center gap-2"><CheckCircle2 className="w-3 h-3 text-emerald-500" /> run.services.*</div>
+                           <div className="p-2 bg-slate-50 dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-800 flex items-center gap-2"><CheckCircle2 className="w-3 h-3 text-emerald-500" /> container.clusters.*</div>
+                           <div className="p-2 bg-slate-50 dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-800 flex items-center gap-2"><CheckCircle2 className="w-3 h-3 text-emerald-500" /> logging.logEntries.list</div>
+                        </div>
+                     </div>
+
+                     <div>
+                        <div className="flex justify-between items-center mb-2">
+                           <h5 className="text-xs font-bold uppercase text-slate-400 tracking-wider flex items-center gap-2">
+                              <Terminal className="w-3 h-3" /> Quick Setup Command
+                           </h5>
+                           <Badge variant="neutral" className="font-mono text-[9px]">Cloud Shell</Badge>
+                        </div>
+                        <div className="relative group">
+                           <pre className="bg-slate-900 text-slate-300 p-4 rounded-xl text-[10px] font-mono leading-relaxed overflow-x-auto border border-slate-800">
+                              {`gcloud iam roles create YallaLabelManager \\
+  --project=${projectId || '$PROJECT_ID'} \\
+  --title="Yalla Label Manager" \\
+  --permissions=compute.instances.list,compute.instances.get,compute.instances.setLabels,compute.disks.list,compute.disks.get,compute.disks.setLabels,storage.buckets.list,storage.buckets.get,storage.buckets.update,logging.logEntries.list,resourcemanager.projects.get,compute.regions.list,run.services.list,run.services.update,container.clusters.list,container.clusters.update`}
+                           </pre>
+                           <button 
+                              onClick={copyCommand}
+                              className="absolute top-2 right-2 p-2 bg-white/10 hover:bg-white/20 rounded-lg text-white opacity-0 group-hover:opacity-100 transition-all"
+                              title="Copy to Clipboard"
+                           >
+                              {copied ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                           </button>
+                        </div>
+                     </div>
+                  </div>
+               </Modal>
+            )}
+         </AnimatePresence>
 
       </div>
     </div>

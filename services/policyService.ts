@@ -1,5 +1,5 @@
 
-import { GceResource, GovernancePolicy, PolicyViolation, TaxonomyRule } from '../types';
+import { GceResource, GovernancePolicy, PolicyViolation, TaxonomyRule, PolicyRuleConfig } from '../types';
 
 // --- Default Taxonomy Rules (Enterprise Standards) ---
 export const DEFAULT_TAXONOMY: TaxonomyRule[] = [
@@ -9,7 +9,7 @@ export const DEFAULT_TAXONOMY: TaxonomyRule[] = [
   { key: 'data-classification', allowedValues: ['public', 'internal', 'confidential', 'restricted'], isRequired: false },
 ];
 
-// --- Policy Implementations ---
+// --- Policy Logic Implementation ---
 
 const checkRequiredLabels = (r: GceResource, rules: TaxonomyRule[]): string | null => {
   const missing = rules.filter(rule => rule.isRequired && !r.labels[rule.key]);
@@ -22,7 +22,6 @@ const checkRequiredLabels = (r: GceResource, rules: TaxonomyRule[]): string | nu
 const checkAllowedValues = (r: GceResource, rules: TaxonomyRule[]): string | null => {
   const invalid = rules.filter(rule => {
     const val = r.labels[rule.key];
-    // If label exists AND allowedValues has items AND val is not in allowedValues
     return val && rule.allowedValues.length > 0 && !rule.allowedValues.includes(val);
   });
 
@@ -32,44 +31,129 @@ const checkAllowedValues = (r: GceResource, rules: TaxonomyRule[]): string | nul
   return null;
 };
 
+// --- Dynamic Check Generator ---
+const createDynamicCheck = (config: PolicyRuleConfig): ((r: GceResource) => string | null) => {
+  switch (config.type) {
+    case 'REQUIRED_LABEL':
+      return (r) => {
+        if (config.params.key && !r.labels[config.params.key]) {
+          return `Missing mandatory label: "${config.params.key}"`;
+        }
+        return null;
+      };
+    case 'ALLOWED_VALUES':
+      return (r) => {
+        const key = config.params.key;
+        const val = key ? r.labels[key] : undefined;
+        if (key && val && config.params.values && config.params.values.length > 0) {
+          if (!config.params.values.includes(val)) {
+            return `Value "${val}" for label "${key}" is not allowed. Options: ${config.params.values.join(', ')}`;
+          }
+        }
+        return null;
+      };
+    case 'NAME_REGEX':
+      return (r) => {
+        if (config.params.regex) {
+          try {
+            const re = new RegExp(config.params.regex);
+            if (!re.test(r.name)) {
+              return `Resource name does not match required pattern: ${config.params.regex}`;
+            }
+          } catch (e) {
+            return `Invalid Regex configuration`;
+          }
+        }
+        return null;
+      };
+    case 'REGION_RESTRICTION':
+      return (r) => {
+        if (r.zone === 'global') return null;
+        if (config.params.values && config.params.values.length > 0) {
+          // Check if zone starts with any allowed region prefix (e.g. us-central1 matches us-central1-a)
+          const allowed = config.params.values.some(region => r.zone.startsWith(region));
+          if (!allowed) {
+            return `Resource located in unauthorized region: ${r.zone}. Allowed: ${config.params.values.join(', ')}`;
+          }
+        }
+        return null;
+      };
+    default:
+      return () => null;
+  }
+};
+
+// --- Helper: Hydrate Policy ---
+// Takes a raw policy object (potentially from storage) and re-attaches the check function
+export const hydratePolicy = (policy: GovernancePolicy): GovernancePolicy => {
+  if (policy.ruleConfig) {
+    return {
+      ...policy,
+      check: createDynamicCheck(policy.ruleConfig)
+    };
+  }
+  return policy;
+};
+
+export const createCustomPolicy = (
+  name: string,
+  description: string,
+  severity: 'CRITICAL' | 'WARNING' | 'INFO',
+  category: 'COST' | 'SECURITY' | 'OPERATIONS',
+  config: PolicyRuleConfig
+): GovernancePolicy => {
+  const policy: GovernancePolicy = {
+    id: `custom-${Math.random().toString(36).substr(2, 9)}`,
+    name,
+    description,
+    category,
+    severity,
+    isEnabled: true,
+    isCustom: true,
+    ruleConfig: config,
+    check: () => null // Placeholder, hydrated below
+  };
+  return hydratePolicy(policy);
+};
+
+// --- Static Policies ---
+
 const checkNamingConvention = (r: GceResource): string | null => {
-  // Enterprise Standard: [env]-[app]-[role]-[index]
-  // Rough check: Must be lowercase, no spaces, at least one hyphen
-  if (!/^[a-z0-9-]+$/.test(r.name)) {
-    return "Name contains uppercase or special characters.";
-  }
-  if (!r.name.includes('-')) {
-    return "Name does not follow hyphenated convention (e.g. env-app-role).";
-  }
+  if (!/^[a-z0-9-]+$/.test(r.name)) return "Name contains uppercase or special characters.";
+  if (!r.name.includes('-')) return "Name does not follow hyphenated convention.";
   return null;
 };
 
 const checkPublicExposure = (r: GceResource): string | null => {
-  // If it's tagged 'internal' or 'restricted' but has public IP
   const classification = r.labels['data-classification'];
-  const hasPublicIp = r.ips?.some(ip => !!ip.external);
+  const hasPublicIp = r.ips?.some(ip => !!ip.external) || r.type === 'CLOUD_RUN' && r.ingress === 'all';
   
   if (hasPublicIp && (classification === 'confidential' || classification === 'restricted')) {
     return "Public IP detected on Restricted/Confidential asset.";
+  }
+  if (hasPublicIp && r.type === 'CLOUD_SQL') {
+      return "Database instance has public IP assignment.";
   }
   return null;
 };
 
 const checkCostCenterFormat = (r: GceResource): string | null => {
   const cc = r.labels['cost-center'];
-  if (cc && !/^cc-\d{3,5}$/.test(cc)) {
-    return "Cost Center format invalid. Must match 'cc-XXXX'.";
-  }
+  if (cc && !/^cc-\d{3,5}$/.test(cc)) return "Cost Center format invalid. Must match 'cc-XXXX'.";
   return null;
 };
 
-// --- Policy Registry ---
+const checkUtilization = (r: GceResource): string | null => {
+    if (r.type === 'INSTANCE' && r.status === 'STOPPED') return "Resource is STOPPED but incurring storage costs.";
+    return null;
+};
 
 export const getPolicies = (taxonomy: TaxonomyRule[]): GovernancePolicy[] => [
   {
     id: 'req-labels',
     name: 'Mandatory Labeling',
     description: 'Ensure all resources have the critical labels defined in the Taxonomy.',
+    category: 'OPERATIONS',
     isEnabled: true,
     severity: 'CRITICAL',
     check: (r) => checkRequiredLabels(r, taxonomy)
@@ -77,7 +161,8 @@ export const getPolicies = (taxonomy: TaxonomyRule[]): GovernancePolicy[] => [
   {
     id: 'taxonomy-values',
     name: 'Controlled Vocabulary',
-    description: 'Labels must match the allowed values list (e.g. environment must be "production", not "prod").',
+    description: 'Labels must match the allowed values list.',
+    category: 'OPERATIONS',
     isEnabled: true,
     severity: 'WARNING',
     check: (r) => checkAllowedValues(r, taxonomy)
@@ -86,28 +171,16 @@ export const getPolicies = (taxonomy: TaxonomyRule[]): GovernancePolicy[] => [
     id: 'naming-std',
     name: 'Naming Convention',
     description: 'Resources must be lowercase, hyphenated, and follow standard patterns.',
+    category: 'OPERATIONS',
     isEnabled: true,
     severity: 'INFO',
     check: (r) => checkNamingConvention(r)
   },
   {
-    id: 'data-sovereignty',
-    name: 'Data Sovereignty (Geo)',
-    description: 'Resources should typically stay within approved regions (us-*, europe-west1).',
-    isEnabled: false, // Disabled by default
-    severity: 'WARNING',
-    check: (r) => {
-      const allowedPrefixes = ['us-', 'europe-west1', 'global'];
-      if (!allowedPrefixes.some(p => r.zone.startsWith(p))) {
-        return `Resource located in non-standard region: ${r.zone}`;
-      }
-      return null;
-    }
-  },
-  {
     id: 'security-exposure',
-    name: 'DLP Public Exposure',
-    description: 'Confidential assets must not have external IP addresses.',
+    name: 'Public Exposure Risk',
+    description: 'Confidential assets and Databases must not have external IP addresses.',
+    category: 'SECURITY',
     isEnabled: true,
     severity: 'CRITICAL',
     check: (r) => checkPublicExposure(r)
@@ -116,15 +189,22 @@ export const getPolicies = (taxonomy: TaxonomyRule[]): GovernancePolicy[] => [
     id: 'cost-center-fmt',
     name: 'Cost Center Format',
     description: 'Cost centers must follow the "cc-XXXX" accounting format.',
+    category: 'COST',
     isEnabled: true,
     severity: 'WARNING',
     check: (r) => checkCostCenterFormat(r)
+  },
+  {
+    id: 'idle-waste',
+    name: 'Idle Resource Waste',
+    description: 'Detects resources that are stopped but still incurring storage costs.',
+    category: 'COST',
+    isEnabled: true,
+    severity: 'WARNING',
+    check: (r) => checkUtilization(r)
   }
 ];
 
-/**
- * Evaluates a single resource against all enabled policies.
- */
 export const evaluateResource = (
   resource: GceResource, 
   policies: GovernancePolicy[]
@@ -147,14 +227,13 @@ export const evaluateResource = (
   return violations;
 };
 
-/**
- * Batch evaluates entire inventory.
- */
 export const evaluateInventory = (
   resources: GceResource[],
   taxonomy: TaxonomyRule[] = DEFAULT_TAXONOMY,
   customPolicies?: GovernancePolicy[]
 ): GceResource[] => {
+  // If custom policies provided, use them. Otherwise default.
+  // NOTE: If using custom, ensure default static ones are included if desired in caller.
   const activePolicies = customPolicies || getPolicies(taxonomy);
 
   return resources.map(r => ({

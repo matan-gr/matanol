@@ -1,225 +1,225 @@
 
-import { GceResource, ResourceType, LabelHistoryEntry, ProvisioningModel, ResourceDisk, ResourceIP } from '../types';
+import { GceResource, ResourceType, LabelHistoryEntry, AnalysisResult } from '../types';
 
-const ZONES = ['us-central1-a', 'us-central1-b', 'us-central1-f', 'europe-west1-d', 'europe-west1-b', 'asia-east1-a', 'asia-northeast1-a'];
-const REGIONS = ['us-central1', 'europe-west1', 'asia-east1', 'asia-northeast1', 'us-east1'];
-const MACHINE_TYPES = ['n1-standard-1', 'e2-medium', 'e2-small', 'c2-standard-4', 'm1-ultramem-40', 't2d-standard-16'];
-const SQL_TIERS = ['db-f1-micro', 'db-g1-small', 'db-n1-standard-1', 'db-custom-4-16384'];
-const DISK_TYPES = ['pd-standard', 'pd-ssd', 'pd-balanced', 'pd-extreme'];
+// --- Constants & Generators ---
 
-const generateId = () => Math.random().toString(36).substring(2, 18);
-const getRandomItem = <T>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
+const USERS = [
+  'jane.doe@company.com', 
+  'devops-bot@company.iam.gserviceaccount.com', 
+  'john.smith@company.com', 
+  'terraform-cloud@system.gserviceaccount.com'
+];
+
+const ACTIONS = ['UPDATE', 'APPLY_PROPOSAL'];
 
 const generateHistory = (count: number): LabelHistoryEntry[] => {
+  if (count === 0) return [];
   const history: LabelHistoryEntry[] = [];
-  const actors = ['jane.doe@company.com', 'system-automation', 'terraform-cloud', 'compliance-bot@yalla-label.iam.gserviceaccount.com'];
+  const now = Date.now();
   
   for (let i = 0; i < count; i++) {
-    const isAi = Math.random() > 0.8;
+    // Random time in last 30 days
+    const timeOffset = Math.floor(Math.random() * 30 * 24 * 60 * 60 * 1000); 
     history.push({
-      timestamp: new Date(Date.now() - Math.floor(Math.random() * 90 * 24 * 60 * 60 * 1000)), // up to 90 days ago
-      actor: isAi ? 'Yalla AI' : getRandomItem(actors),
-      changeType: isAi ? 'APPLY_PROPOSAL' : 'UPDATE',
-      previousLabels: { 'env': 'dev' },
-      newLabels: { 'env': 'prod', 'reviewed': 'true', 'cost-center': 'cc-123' }
+      timestamp: new Date(now - timeOffset),
+      actor: USERS[Math.floor(Math.random() * USERS.length)],
+      changeType: ACTIONS[Math.floor(Math.random() * ACTIONS.length)] as any,
+      previousLabels: { 'env': 'dev', 'temp': 'true' },
+      newLabels: { 'env': 'prod', 'cost-center': 'cc-102' }
     });
   }
   return history.sort((a,b) => b.timestamp.getTime() - a.timestamp.getTime());
 };
 
-const createResourceBase = (name: string, type: ResourceType, zone: string) => ({
-    id: generateId(),
-    name,
-    type,
-    zone,
-    description: Math.random() > 0.7 ? 'Automatically provisioned via Terraform pipeline.' : undefined,
-    creationTimestamp: new Date(Date.now() - Math.floor(Math.random() * 365 * 24 * 60 * 60 * 1000)).toISOString(),
+// --- Scenario Builders ---
+
+const createResource = (
+  partial: Partial<GceResource> & { name: string, type: ResourceType, zone: string }
+): GceResource => {
+  return {
+    id: Math.random().toString(36).substring(2, 18),
+    status: 'RUNNING',
+    creationTimestamp: new Date(Date.now() - Math.floor(Math.random() * 90 * 24 * 60 * 60 * 1000)).toISOString(),
     labels: {},
-    labelFingerprint: generateId(),
-    history: generateHistory(Math.random() > 0.7 ? 3 : 0), // 30% chance of history
-    isDirty: false
-});
-
-// Creates a set of related resources (e.g., VM + Disk + IP)
-const createVmCluster = (prefix: string, env: string, zone: string, count: number, isSpot = false) => {
-    const resources: GceResource[] = [];
-    
-    for(let i=1; i<=count; i++) {
-        const name = `${prefix}-${i.toString().padStart(2, '0')}`;
-        const machineType = getRandomItem(MACHINE_TYPES);
-        const bootDiskType = Math.random() > 0.5 ? 'pd-ssd' : 'pd-balanced';
-        
-        // VM
-        const vm: GceResource = {
-            ...createResourceBase(name, 'INSTANCE', zone),
-            status: Math.random() > 0.1 ? 'RUNNING' : 'STOPPED', // 90% uptime
-            machineType,
-            provisioningModel: isSpot ? 'SPOT' : 'STANDARD',
-            ips: [
-                {
-                    network: 'vpc-main',
-                    internal: `10.128.${Math.floor(Math.random()*20)}.${Math.floor(Math.random()*255)}`,
-                    external: Math.random() > 0.6 ? `34.${Math.floor(Math.random()*100)}.${Math.floor(Math.random()*255)}.12` : undefined
-                }
-            ],
-            disks: [
-                { deviceName: `${name}-boot`, sizeGb: 20, type: bootDiskType, boot: true, interface: 'NVMe' }
-            ],
-            tags: ['http-server', 'https-server', env === 'production' ? 'prod-access' : 'dev-access'],
-            serviceAccount: `service-${Math.floor(Math.random()*1000)}@yalla-label.iam.gserviceaccount.com`,
-            labels: {
-                environment: env,
-                managed_by: 'terraform',
-                app: prefix.split('-')[0] // rough guess
-            }
-        };
-        resources.push(vm);
-
-        // Data Disk (20% chance)
-        if (Math.random() > 0.8) {
-            const diskName = `${name}-data`;
-            const diskType = getRandomItem(DISK_TYPES);
-            vm.disks?.push({ deviceName: diskName, sizeGb: 100, type: diskType, boot: false, interface: 'SCSI' });
-            // Add actual Disk Resource
-            resources.push({
-                ...createResourceBase(diskName, 'DISK', zone),
-                sizeGb: '100',
-                machineType: diskType, // Store disk type here for display
-                status: 'READY',
-                provisioningModel: 'STANDARD',
-                provisionedIops: diskType.includes('ssd') ? 3000 : undefined,
-                provisionedThroughput: diskType.includes('ssd') ? 120 : undefined,
-                labels: { ...vm.labels, 'attachment': name }
-            });
-        }
-    }
-    return resources;
+    labelFingerprint: 'mock-fingerprint',
+    history: generateHistory(Math.random() > 0.7 ? 2 : 0),
+    provisioningModel: 'STANDARD',
+    ...partial
+  };
 };
 
+/**
+ * Generates a realistic Enterprise environment
+ */
 export const generateMockResources = (count: number = 50): GceResource[] => {
-  let allResources: GceResource[] = [];
+  const resources: GceResource[] = [];
 
-  // 1. Production Web Cluster (US)
-  allResources.push(...createVmCluster('prod-frontend', 'production', 'us-central1-a', 5, false));
-  allResources.push(...createVmCluster('prod-api', 'production', 'us-central1-b', 3, false));
+  // 1. The "Legacy Production" Monolith (High Cost, Stable)
+  // -------------------------------------------------------
+  const prodNet = 'vpc-production';
+  const prodSubnet = 'subnet-us-central1';
   
-  // 2. Dev Environment (Spot Instances - Cost Saving)
-  allResources.push(...createVmCluster('dev-worker', 'development', 'us-central1-f', 4, true));
+  // Database Primary
+  resources.push(createResource({
+    name: 'prod-legacy-db-primary',
+    type: 'CLOUD_SQL',
+    zone: 'us-central1-a',
+    machineType: 'db-custom-16-65536',
+    sizeGb: '1024',
+    databaseVersion: 'POSTGRES_13',
+    status: 'RUNNABLE',
+    labels: { environment: 'production', app: 'legacy-core', 'cost-center': 'cc-500', owner: 'data-team' },
+    ips: [{ network: prodNet, internal: '10.0.1.5' }]
+  }));
 
-  // 3. Database Layer (Cloud SQL)
-  allResources.push({
-      ...createResourceBase('prod-main-db-primary', 'CLOUD_SQL', 'us-central1'),
-      machineType: 'db-custom-4-16384',
-      sizeGb: '250',
-      databaseVersion: 'POSTGRES_14',
-      status: 'RUNNABLE',
-      provisioningModel: 'STANDARD',
-      labels: { environment: 'production', tier: 'backend', 'cost-center': 'finance' },
-      ips: [{ network: 'vpc-main', internal: '10.128.0.5' }]
-  });
-  
-  // 4. Orphaned Disks (Waste)
-  ['old-backup-disk-1', 'migrated-data-temp'].forEach(name => {
-      allResources.push({
-          ...createResourceBase(name, 'DISK', 'us-central1-a'),
-          sizeGb: '500',
-          machineType: 'pd-standard',
-          status: 'READY', // Not attached
-          provisioningModel: 'STANDARD',
-          labels: { 'created-by': 'unknown' } 
-      });
-  });
+  // App Servers Group
+  for(let i=1; i<=3; i++) {
+    resources.push(createResource({
+      name: `prod-app-server-0${i}`,
+      type: 'INSTANCE',
+      zone: 'us-central1-a',
+      machineType: 'n2-standard-8',
+      status: 'RUNNING',
+      labels: { environment: 'production', app: 'legacy-core', 'cost-center': 'cc-500' }, // Missing owner (Policy Violation)
+      ips: [{ network: prodNet, internal: `10.0.1.1${i}` }],
+      disks: [{ deviceName: 'boot', sizeGb: 100, type: 'pd-ssd', boot: true }]
+    }));
+  }
 
-  // 5. Global Storage (Buckets)
-  ['assets-cdn-prod', 'logs-archive-2023', 'terraform-state-prod'].forEach(name => {
-      allResources.push({
-          ...createResourceBase(name, 'BUCKET', 'us-multi-region'),
-          storageClass: name.includes('archive') ? 'COLDLINE' : 'STANDARD',
-          status: 'READY',
-          provisioningModel: 'STANDARD',
-          locationType: 'multi-region',
-          publicAccess: name.includes('cdn'), // CDN is public
-          labels: { environment: 'production', 'data-classification': 'internal' }
-      });
-  });
+  // 2. The "Modern Cloud Native" Stack (GKE + Cloud Run)
+  // ----------------------------------------------------
+  // GKE Cluster
+  resources.push(createResource({
+    name: 'k8s-prod-us-east',
+    type: 'GKE_CLUSTER',
+    zone: 'us-east1-b',
+    status: 'RUNNING',
+    labels: { environment: 'production', orchestrator: 'gke', 'cost-center': 'cc-600', owner: 'platform-eng' },
+    clusterDetails: {
+      nodeCount: 12,
+      version: '1.27.3-gke.100',
+      endpoint: '34.72.10.5',
+      isAutopilot: true,
+      network: prodNet,
+      subnetwork: 'subnet-us-east1',
+      nodePools: [{ name: 'autopilot-pool', version: '1.27.3', status: 'RUNNING', nodeCount: 12, machineType: 'e2-standard-4' }]
+    }
+  }));
 
-  // 6. Cloud Run Services (Modern Apps)
-  ['auth-service-v2', 'payment-processor'].forEach(name => {
-      allResources.push({
-          ...createResourceBase(name, 'CLOUD_RUN', 'us-central1'),
-          status: 'READY',
-          machineType: 'Serverless',
-          url: `https://${name}-832js.a.run.app`,
-          provisioningModel: 'STANDARD',
-          memory: '512Mi',
-          cpu: '1.0',
-          ingress: name.includes('auth') ? 'all' : 'internal',
-          labels: { environment: 'production', 'revision': '231' }
-      });
-  });
-
-  // 7. Snapshots (Backups)
-  allResources.push({
-      ...createResourceBase('snapshot-prod-db-pre-migration', 'SNAPSHOT', 'global'),
-      sizeGb: '250',
+  // Microservices (Cloud Run)
+  ['payment-service', 'auth-service', 'notification-service'].forEach((svc, idx) => {
+    resources.push(createResource({
+      name: `prod-${svc}`,
+      type: 'CLOUD_RUN',
+      zone: 'us-east1',
       status: 'READY',
-      provisioningModel: 'STANDARD',
-      labels: { 'retention': '7d', 'auto-snapshot': 'true' }
+      machineType: 'Serverless',
+      url: `https://${svc}-xh5k.a.run.app`,
+      labels: { environment: 'production', microservice: svc, 'cost-center': 'cc-600' },
+      ingress: idx === 0 ? 'all' : 'internal' // Payments is public, others internal
+    }));
   });
 
-  // 8. GKE Clusters (Kubernetes)
-  allResources.push({
-      ...createResourceBase('k8s-prod-us-west', 'GKE_CLUSTER', 'us-west1-b'),
-      status: 'RUNNING',
-      provisioningModel: 'STANDARD',
-      labels: { environment: 'production', 'orchestrator': 'gke' },
-      clusterDetails: {
-          nodeCount: 12,
-          version: '1.27.4-gke.100',
-          endpoint: '34.120.55.10',
-          isAutopilot: false,
-          network: 'vpc-main',
-          subnetwork: 'subnet-us-west1',
-          servicesIpv4Cidr: '10.40.0.0/20',
-          nodePools: [
-              { name: 'default-pool', version: '1.27.4-gke.100', status: 'RUNNING', nodeCount: 3, machineType: 'e2-standard-4' },
-              { name: 'high-mem-pool', version: '1.27.4-gke.100', status: 'RUNNING', nodeCount: 9, machineType: 'm1-ultramem-40' }
-          ]
-      }
-  });
+  // 3. The "Shadow IT" / Dev Chaos (Messy, Violations, Waste)
+  // ---------------------------------------------------------
+  const devNet = 'default';
   
-  allResources.push({
-      ...createResourceBase('k8s-dev-autopilot', 'GKE_CLUSTER', 'us-central1'),
+  // Huge Stopped GPU Instance (Waste)
+  resources.push(createResource({
+    name: 'dev-ml-experiment-gpu',
+    type: 'INSTANCE',
+    zone: 'us-west1-b',
+    machineType: 'a2-highgpu-1g', // Expensive!
+    status: 'STOPPED', // Stopped but costing storage
+    provisioningModel: 'STANDARD',
+    labels: { created_by: 'intern' }, // Non-standard label
+    ips: [{ network: devNet, internal: '10.128.0.5', external: '35.202.10.1' }], // Public IP on dev box
+    disks: [
+      { deviceName: 'boot', sizeGb: 50, type: 'pd-standard', boot: true },
+      { deviceName: 'training-data', sizeGb: 2000, type: 'pd-ssd', boot: false } // Huge wasted disk
+    ]
+  }));
+
+  // Unlabeled Test VMs
+  for(let i=1; i<=4; i++) {
+    resources.push(createResource({
+      name: `test-box-${i}`,
+      type: 'INSTANCE',
+      zone: 'us-west1-b',
+      machineType: 'e2-micro',
       status: 'RUNNING',
-      provisioningModel: 'STANDARD',
-      labels: { environment: 'development', 'mode': 'autopilot' },
-      clusterDetails: {
-          nodeCount: 3, 
-          version: '1.28.1-gke.200',
-          endpoint: '35.192.11.22',
-          isAutopilot: true,
-          network: 'vpc-dev',
-          subnetwork: 'subnet-us-central1-dev',
-          servicesIpv4Cidr: '10.50.0.0/20',
-          nodePools: [
-              { name: 'autopilot-default', version: '1.28.1-gke.200', status: 'RUNNING', nodeCount: 3, machineType: 'autopilot-managed' }
-          ]
-      }
-  });
+      provisioningModel: 'SPOT',
+      labels: {}, // 100% Unlabeled
+      ips: [{ network: devNet, internal: `10.128.0.1${i}`, external: `34.100.20.${i}` }], // Exposed
+      disks: [{ deviceName: 'boot', sizeGb: 20, type: 'pd-balanced', boot: true }]
+    }));
+  }
 
-  // 9. Chaos / Unlabeled Resources (The "Mess" to clean up)
-  const messyNames = ['instance-20231102', 'test-vm-do-not-delete', 'gke-cluster-1-default-pool-39a1', 'temp-download-box'];
-  messyNames.forEach(name => {
-      allResources.push({
-          ...createResourceBase(name, 'INSTANCE', getRandomItem(ZONES)),
-          status: 'RUNNING',
-          machineType: 'e2-micro',
-          provisioningModel: 'STANDARD',
-          labels: {}, // Intentionally empty
-          ips: [{ network: 'default', internal: '10.142.0.2', external: '35.202.10.1' }],
-          disks: [{ deviceName: name, sizeGb: 10, type: 'pd-standard', boot: true, interface: 'SCSI' }]
-      });
-  });
+  // Orphaned Disks
+  resources.push(createResource({
+    name: 'backup-disk-nov-2023',
+    type: 'DISK',
+    zone: 'us-central1-a',
+    sizeGb: '500',
+    machineType: 'pd-standard',
+    status: 'READY', // Not attached
+    labels: { description: 'do-not-delete' }
+  }));
 
-  return allResources;
+  // 4. Global Storage
+  // -----------------
+  resources.push(createResource({
+    name: 'company-assets-public',
+    type: 'BUCKET',
+    zone: 'us-multi-region',
+    storageClass: 'STANDARD',
+    status: 'READY',
+    publicAccess: true,
+    locationType: 'multi-region',
+    labels: { 'data-classification': 'public', environment: 'production' }
+  }));
+
+  resources.push(createResource({
+    name: 'finance-records-archive',
+    type: 'BUCKET',
+    zone: 'us-east1',
+    storageClass: 'COLDLINE',
+    status: 'READY',
+    publicAccess: false,
+    labels: { 'data-classification': 'restricted', 'dept': 'finance' } // Non-standard key 'dept'
+  }));
+
+  return resources;
+};
+
+/**
+ * Simulates the AI Labeling logic purely client-side for the Demo
+ */
+export const mockAnalyzeResources = (resources: GceResource[]): AnalysisResult[] => {
+  return resources.map(r => {
+    const suggestions: Record<string, string> = {};
+    
+    // Simple heuristic rules to mimic AI
+    if (r.name.includes('prod')) suggestions['environment'] = 'production';
+    else if (r.name.includes('dev') || r.name.includes('test')) suggestions['environment'] = 'development';
+    else if (r.name.includes('staging')) suggestions['environment'] = 'staging';
+
+    if (r.name.includes('db') || r.name.includes('sql')) suggestions['app'] = 'database';
+    else if (r.name.includes('web') || r.name.includes('frontend')) suggestions['app'] = 'frontend';
+    else if (r.name.includes('api') || r.name.includes('svc')) suggestions['app'] = 'backend';
+
+    if (!r.labels['cost-center']) {
+      suggestions['cost-center'] = r.name.includes('prod') ? 'cc-500' : 'cc-100';
+    }
+
+    if (!r.labels['owner']) {
+        suggestions['owner'] = 'platform-engineering';
+    }
+
+    return {
+      resourceId: r.id,
+      suggestedLabels: suggestions,
+      reasoning: "Based on resource name patterns and common infrastructure conventions."
+    };
+  }).filter(res => Object.keys(res.suggestedLabels).length > 0);
 };

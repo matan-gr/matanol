@@ -236,6 +236,13 @@ export const App = () => {
     addNotification('View deleted.', 'info');
   };
 
+  const handlePolicyNavigate = (partialFilter?: Partial<FilterConfig>) => {
+      if (partialFilter) {
+          setFilterConfig(prev => ({ ...prev, ...partialFilter }));
+      }
+      setActiveTab('inventory');
+  };
+
   // Render Login
   if (!credentials) {
     return (
@@ -393,7 +400,11 @@ export const App = () => {
                     title="Governance Center" 
                     subtitle="Define labeling taxonomies and enforce active compliance policies." 
                 />
-                <PolicyManager resources={resources} onUpdatePolicies={updateGovernance} />
+                <PolicyManager 
+                    resources={resources} 
+                    onUpdatePolicies={updateGovernance} 
+                    onNavigateToViolations={handlePolicyNavigate}
+                />
              </PageTransition>
           )}
 

@@ -3,7 +3,7 @@ import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { GceResource, GcpCredentials, LabelHistoryEntry, TaxonomyRule, GovernancePolicy } from '../types';
 import { fetchAllResources, updateResourceLabels as updateResourceLabelsApi, fetchResource } from '../services/gcpService';
 import { analyzeResourceBatch, generateComplianceReport } from '../services/geminiService';
-import { generateMockResources } from '../services/mockService';
+import { generateMockResources, mockAnalyzeResources } from '../services/mockService';
 import { persistenceService } from '../services/persistenceService';
 import { evaluateInventory, DEFAULT_TAXONOMY, getPolicies } from '../services/policyService';
 
@@ -48,7 +48,6 @@ export const useResourceManager = (
       setLoadingStatus({ progress: 15, message: 'Initializing Security Context...' });
       await persistenceService.init(credentials.projectId, credentials.accessToken);
       
-      // Load history map early so we can attach it as resources stream in
       const historyMap = await persistenceService.getProjectHistory(credentials.projectId);
 
       setLoadingStatus({ progress: 20, message: 'Starting Resource Discovery...' });
@@ -57,7 +56,6 @@ export const useResourceManager = (
         credentials.projectId, 
         credentials.accessToken,
         (newChunk, source) => {
-           // Hydrate chunk with persistent history
            const hydratedChunk = newChunk.map(r => ({
                ...r,
                history: historyMap[r.id] || []
@@ -109,12 +107,23 @@ export const useResourceManager = (
 
   const loadDemoData = useCallback(async () => {
     setIsConnecting(true);
-    setLoadingStatus({ progress: 10, message: 'Loading Demo Environment...' });
     currentCredentials.current = { projectId: 'demo-mode', accessToken: 'demo-mode' };
-    await new Promise(r => setTimeout(r, 800)); 
-    const demoResources = generateMockResources(150); 
+    
+    // Simulate realistic loading steps
+    setLoadingStatus({ progress: 10, message: 'Authenticating Demo User...' });
+    await new Promise(r => setTimeout(r, 600));
+    
+    setLoadingStatus({ progress: 30, message: 'Scanning Regions (us-central1, europe-west1)...' });
+    await new Promise(r => setTimeout(r, 800));
+    
+    setLoadingStatus({ progress: 60, message: 'Analyzing IAM Policies...' });
+    const demoResources = generateMockResources(50); 
     setResources(demoResources);
-    setLoadingStatus({ progress: 100, message: 'Demo Ready' });
+    
+    setLoadingStatus({ progress: 85, message: 'Calculating Governance Scores...' });
+    await new Promise(r => setTimeout(r, 500));
+
+    setLoadingStatus({ progress: 100, message: 'Demo Environment Ready' });
     setIsConnecting(false);
     return true;
   }, []);
@@ -129,8 +138,42 @@ export const useResourceManager = (
     addNotification('AI Auditor initiated. Scanning inventory...', 'info');
     
     try {
-      // If AI Studio context is available (e.g. specialized environment), trigger key selection if needed.
-      // Otherwise, assume process.env.API_KEY is available or will be handled by the service.
+      // DEMO MODE: Simulate AI analysis locally
+      if (currentCredentials.current?.projectId === 'demo-mode') {
+          await new Promise(r => setTimeout(r, 2000)); // Fake latency
+          
+          const unlabeled = resources.filter(r => Object.keys(r.labels).length < 3).slice(0, 50);
+          const results = mockAnalyzeResources(unlabeled);
+          
+          setResources(prev => prev.map(res => {
+              const match = results.find(r => r.resourceId === res.id);
+              if (match) return { ...res, proposedLabels: match.suggestedLabels };
+              return res;
+          }));
+          
+          addNotification(`AI Analysis complete. ${results.length} optimizations found.`, 'success');
+          
+          // Generate fake report
+          const reportText = `
+## Executive Summary
+The environment shows a **${Math.round((stats.labeled/stats.total)*100)}% compliance score**. While production assets are generally well-governed, there is significant "Shadow IT" activity in the development projects.
+
+## Risk Analysis
+- **Cost Risks**: Detected ${resources.filter(r=>r.status==='STOPPED').length} stopped instances incurring storage costs ($${(resources.filter(r=>r.status==='STOPPED').length * 20).toFixed(2)}/mo est).
+- **Security**: ${resources.filter(r=>r.publicAccess || r.ips?.some(i=>i.external)).length} resources have public internet exposure. 
+- **Tagging**: ${stats.unlabeled} resources are completely unlabeled, making cost allocation impossible.
+
+## Strategic Recommendations
+- **Immediate**: Label the "Shadow IT" resources in \`us-west1\`.
+- **Policy**: Enforce a "Cost Center" tag requirement at the Organization Policy level.
+- **Cleanup**: Delete the 2TB unattached disk found in \`us-central1\`.
+          `;
+          setReport(reportText);
+          setIsAnalysing(false);
+          return;
+      }
+
+      // REAL MODE
       if ((window as any).aistudio) {
          try {
              const hasKey = await (window as any).aistudio.hasSelectedApiKey();
@@ -163,7 +206,7 @@ export const useResourceManager = (
     } finally {
       setIsAnalysing(false);
     }
-  }, [resources, addNotification]);
+  }, [resources, addNotification, stats]);
 
   const updateResourceLabels = useCallback(async (
     credentials: GcpCredentials, 

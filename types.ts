@@ -46,6 +46,17 @@ export interface ResourceIP {
 
 // --- Governance Types ---
 export type PolicySeverity = 'CRITICAL' | 'WARNING' | 'INFO';
+export type PolicyCategory = 'COST' | 'SECURITY' | 'OPERATIONS';
+export type RuleType = 'REQUIRED_LABEL' | 'ALLOWED_VALUES' | 'NAME_REGEX' | 'REGION_RESTRICTION' | 'CUSTOM';
+
+export interface PolicyRuleConfig {
+  type: RuleType;
+  params: {
+    key?: string;       // For label keys
+    values?: string[];  // For allowed values / regions
+    regex?: string;     // For name matching
+  };
+}
 
 export interface PolicyViolation {
   policyId: string;
@@ -57,8 +68,11 @@ export interface GovernancePolicy {
   id: string;
   name: string;
   description: string;
+  category: PolicyCategory;
   isEnabled: boolean;
   severity: PolicySeverity;
+  isCustom?: boolean;
+  ruleConfig?: PolicyRuleConfig; // Store config to allow editing
   check: (r: GceResource) => string | null; // Returns error message or null
 }
 
@@ -178,8 +192,8 @@ export interface FilterConfig {
   labels: { key: string; value: string }[];
   showUnlabeledOnly: boolean;
   tags?: string[];
-  // New Filter
   showViolationsOnly?: boolean;
+  violatedPolicyId?: string; // NEW: Filter by specific policy
 }
 
 export interface SavedView {
