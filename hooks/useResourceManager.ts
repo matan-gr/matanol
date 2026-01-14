@@ -47,6 +47,9 @@ export const useResourceManager = (
     try {
       setLoadingStatus({ progress: 15, message: 'Initializing Security Context...' });
       await persistenceService.init(credentials.projectId, credentials.accessToken);
+      
+      // Load history map early so we can attach it as resources stream in
+      const historyMap = await persistenceService.getProjectHistory(credentials.projectId);
 
       setLoadingStatus({ progress: 20, message: 'Starting Resource Discovery...' });
       
@@ -54,7 +57,13 @@ export const useResourceManager = (
         credentials.projectId, 
         credentials.accessToken,
         (newChunk, source) => {
-           pendingResources.current = [...pendingResources.current, ...newChunk];
+           // Hydrate chunk with persistent history
+           const hydratedChunk = newChunk.map(r => ({
+               ...r,
+               history: historyMap[r.id] || []
+           }));
+           
+           pendingResources.current = [...pendingResources.current, ...hydratedChunk];
            setLoadingStatus(prev => ({
                progress: Math.min(95, prev.progress + 5),
                message: `Discovered ${pendingResources.current.length} resources (${source})...`
@@ -116,11 +125,21 @@ export const useResourceManager = (
   }, []);
 
   const analyzeResources = useCallback(async () => {
-    if (!window.aistudio) return;
     setIsAnalysing(true);
     addNotification('AI Auditor initiated. Scanning inventory...', 'info');
     
     try {
+      // If AI Studio context is available (e.g. specialized environment), trigger key selection if needed.
+      // Otherwise, assume process.env.API_KEY is available or will be handled by the service.
+      if ((window as any).aistudio) {
+         try {
+             const hasKey = await (window as any).aistudio.hasSelectedApiKey();
+             if(!hasKey) await (window as any).aistudio.openSelectKey();
+         } catch(e) {
+             console.warn("AI Studio Key selection skipped or failed", e);
+         }
+      }
+
       const unlabeled = resources.filter(r => Object.keys(r.labels).length === 0).slice(0, 50); 
       
       if (unlabeled.length === 0) {
@@ -138,8 +157,9 @@ export const useResourceManager = (
       const reportText = await generateComplianceReport(resources);
       setReport(reportText);
       
-    } catch (error) {
-      addNotification('AI Analysis failed. Check API Key.', 'error');
+    } catch (error: any) {
+      console.error("Analysis Error:", error);
+      addNotification(`AI Analysis failed: ${error.message || 'Unknown error'}`, 'error');
     } finally {
       setIsAnalysing(false);
     }
@@ -171,18 +191,25 @@ export const useResourceManager = (
         newLabels: newLabels
       };
 
+      const updatedHistory = [historyEntry, ...(resource.history || [])];
+
       setResources(prev => prev.map(r => {
         if (r.id === resourceId) {
           return {
             ...r,
             labels: newLabels,
             proposedLabels: undefined,
-            history: [historyEntry, ...(r.history || [])],
+            history: updatedHistory,
             isUpdating: false
           };
         }
         return r;
       }));
+
+      // Persistent Save
+      if (credentials.accessToken !== 'demo-mode') {
+          persistenceService.saveHistory(credentials.projectId, resourceId, updatedHistory);
+      }
 
       addNotification(`Updated ${resource.name}`, 'success');
     } catch (error: any) {
@@ -313,29 +340,38 @@ export const useResourceManager = (
      } else {
          // --- COMMIT PHASE ---
          // Update UI state with new labels only after full success
+         
+         const updatesToPersist = new Map<string, LabelHistoryEntry[]>();
+
          setResources(prev => prev.map(r => {
              if (updates.has(r.id)) {
                  const newLabels = updates.get(r.id)!;
+                 
+                 const historyEntry: LabelHistoryEntry = {
+                     timestamp: new Date(),
+                     actor: 'User (Batch)',
+                     changeType: 'UPDATE',
+                     previousLabels: originalStates.get(r.id) || {},
+                     newLabels: newLabels
+                 };
+                 const newHistory = [historyEntry, ...(r.history || [])];
+                 updatesToPersist.set(r.id, newHistory);
+
                  return { 
                      ...r, 
                      labels: newLabels, 
                      isUpdating: false, 
                      proposedLabels: undefined,
-                     history: [
-                         {
-                             timestamp: new Date(),
-                             actor: 'User (Batch)',
-                             changeType: 'UPDATE',
-                             previousLabels: originalStates.get(r.id) || {},
-                             newLabels: newLabels
-                         },
-                         ...(r.history || [])
-                     ]
+                     history: newHistory
                  };
              }
              return r;
          }));
          
+         if (credentials.accessToken !== 'demo-mode') {
+             persistenceService.bulkSaveHistory(credentials.projectId, updatesToPersist);
+         }
+
          addNotification(`Transaction successful. Updated ${count} resources.`, 'success');
      }
 

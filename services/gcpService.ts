@@ -551,13 +551,67 @@ export const fetchResource = async (projectId: string, accessToken: string, reso
 };
 
 export const ensureGovernanceBucket = async (projectId: string, accessToken: string): Promise<boolean> => {
-    // Placeholder: In a real app, strictly check permissions first
-    // This reduces 403 noise in the console.
-    return false; 
+  const bucketName = `yalla-gov-${projectId}`;
+  const url = `${STORAGE_BASE_URL}/${bucketName}`;
+  
+  try {
+    // Check existence
+    const check = await fetchWithBackoff(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (check.ok) return true;
+    
+    if (check.status === 404) {
+      // Create
+      const create = await fetchWithBackoff(`${STORAGE_BASE_URL}?project=${projectId}`, {
+        method: 'POST',
+        headers: { 
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            name: bucketName,
+            location: 'US', // Defaulting to US for simplicity, could be multi-region
+            storageClass: 'STANDARD'
+        })
+      });
+      return create.ok;
+    }
+    return false;
+  } catch (e) {
+    console.error("Bucket check failed", e);
+    return false;
+  }
 };
 
-export const fetchHistoryFromGcs = async (projectId: string, accessToken: string): Promise<any> => { return null; };
-export const saveHistoryToGcs = async (projectId: string, accessToken: string, data: any): Promise<void> => {};
+export const fetchHistoryFromGcs = async (projectId: string, accessToken: string): Promise<any> => {
+    const bucketName = `yalla-gov-${projectId}`;
+    const url = `${STORAGE_BASE_URL}/${bucketName}/o/history.json?alt=media`;
+    
+    try {
+        const res = await fetchWithBackoff(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+        if (res.ok) return await res.json();
+        return null;
+    } catch (e) {
+        return null;
+    }
+};
+
+export const saveHistoryToGcs = async (projectId: string, accessToken: string, data: any): Promise<void> => {
+    const bucketName = `yalla-gov-${projectId}`;
+    const url = `https://storage.googleapis.com/upload/storage/v1/b/${bucketName}/o?uploadType=media&name=history.json`;
+    
+    try {
+        await fetchWithBackoff(url, {
+            method: 'POST',
+            headers: { 
+                Authorization: `Bearer ${accessToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(data)
+        });
+    } catch (e) {
+        console.error("Failed to save history to GCS", e);
+    }
+};
 
 export const fetchGcpAuditLogs = async (
   projectId: string,
