@@ -6,16 +6,15 @@ import {
   RefreshCw, Plus, Trash2,
   Lightbulb, Check, Layers,
   Replace, Eye, Scissors, Wand2, Loader2, Split,
-  HelpCircle, Info, BookOpen, AlertCircle
+  HelpCircle, Info, BookOpen, AlertCircle, BarChart3, Merge, ArrowDownToLine, MousePointerClick, MessageSquare, List
 } from 'lucide-react';
-import { Button, Input, ToggleSwitch, Badge, Tooltip, Modal } from './DesignSystem';
+import { Button, Input, ToggleSwitch, Badge, Tooltip, Modal, Select } from './DesignSystem';
 import { motion, AnimatePresence } from 'framer-motion';
-import { analyzeNamingPatterns } from '../services/geminiService';
 import { validateKey, validateValue } from '../utils/validation';
 
 // --- Types ---
 
-type OperationType = 'ADD' | 'REMOVE' | 'REPLACE' | 'EXTRACT_REGEX' | 'PATTERN' | 'CASE_TRANSFORM';
+type OperationType = 'ADD' | 'REMOVE' | 'REPLACE' | 'EXTRACT_REGEX' | 'PATTERN' | 'CASE_TRANSFORM' | 'NORMALIZE_VALUES';
 
 interface LabelOperation {
   id: string;
@@ -27,10 +26,12 @@ interface LabelOperation {
     replace?: string;
     regex?: string;
     delimiter?: string;
-    source?: 'name' | 'id'; 
-    groups?: { index: number; targetKey: string }[]; // For Regex
-    mappings?: { index: number; targetKey: string }[]; // For Pattern
+    groups?: { index: number; targetKey: string }[];
+    mappings?: { index: number; targetKey: string }[];
     casing?: 'lowercase' | 'uppercase';
+    // For Normalization
+    targetKey?: string;
+    valueMap?: Record<string, string>; // { "bad_value": "good_value" }
   };
   enabled: boolean;
 }
@@ -39,7 +40,7 @@ interface LabelingStudioProps {
   isOpen: boolean;
   onClose: () => void;
   selectedResources: GceResource[];
-  onApply: (updates: Map<string, Record<string, string>>) => void;
+  onApply: (updates: Map<string, Record<string, string>>, reason?: string) => void;
 }
 
 // --- Constants ---
@@ -51,24 +52,8 @@ const DEFAULT_OPERATIONS: Record<OperationType, LabelOperation> = {
   EXTRACT_REGEX: { id: '', type: 'EXTRACT_REGEX', config: { regex: '^([a-z]+)-', groups: [{ index: 1, targetKey: 'env' }] }, enabled: true },
   PATTERN: { id: '', type: 'PATTERN', config: { delimiter: '-', mappings: [] }, enabled: true },
   CASE_TRANSFORM: { id: '', type: 'CASE_TRANSFORM', config: { casing: 'lowercase' }, enabled: true },
+  NORMALIZE_VALUES: { id: '', type: 'NORMALIZE_VALUES', config: { targetKey: '', valueMap: {} }, enabled: true },
 };
-
-const MACROS = [
-  { 
-    name: "Standardize: Env & App", 
-    ops: [
-      { id: '1', type: 'ADD', config: { key: 'managed-by', value: 'yalla-label' }, enabled: true },
-      { id: '2', type: 'PATTERN', config: { delimiter: '-', mappings: [{ index: 0, targetKey: 'env' }, { index: 1, targetKey: 'app' }] }, enabled: true }
-    ] as LabelOperation[]
-  },
-  {
-    name: "Cleanup: Temp Labels",
-    ops: [
-      { id: '1', type: 'REMOVE', config: { key: 'temp' }, enabled: true },
-      { id: '2', type: 'REMOVE', config: { key: 'test-run' }, enabled: true }
-    ] as LabelOperation[]
-  }
-];
 
 const OP_DESCRIPTIONS: Record<OperationType, { label: string, desc: string, icon: any }> = {
     ADD: { label: "Add Label", desc: "Apply a specific Key:Value pair to all resources.", icon: Plus },
@@ -77,6 +62,7 @@ const OP_DESCRIPTIONS: Record<OperationType, { label: string, desc: string, icon
     PATTERN: { label: "Split Pattern", desc: "Split resource Name by a delimiter (e.g. '-') to extract values.", icon: Split },
     EXTRACT_REGEX: { label: "Regex Extract", desc: "Advanced extraction from Name using Regular Expressions.", icon: Scissors },
     CASE_TRANSFORM: { label: "Case Transform", desc: "Force keys/values to lowercase or uppercase.", icon: RefreshCw },
+    NORMALIZE_VALUES: { label: "Normalize Values", desc: "Map multiple inconsistent values to a single standard.", icon: Merge },
 };
 
 // --- Logic ---
@@ -99,8 +85,8 @@ const applyOperations = (labels: Record<string, string>, resourceName: string, o
       case 'REPLACE':
         if (op.config.find && op.config.replace) {
           Object.keys(currentLabels).forEach(k => {
-            if (currentLabels[k] === op.config.find) {
-              currentLabels[k] = op.config.replace!;
+            if (currentLabels[k].includes(op.config.find!)) {
+              currentLabels[k] = currentLabels[k].replace(op.config.find!, op.config.replace!);
             }
           });
         }
@@ -139,72 +125,173 @@ const applyOperations = (labels: Record<string, string>, resourceName: string, o
         });
         currentLabels = newLabels;
         break;
+      case 'NORMALIZE_VALUES':
+        if (op.config.targetKey && op.config.valueMap) {
+            const target = op.config.targetKey;
+            const currentVal = currentLabels[target];
+            if (currentVal && op.config.valueMap[currentVal]) {
+                currentLabels[target] = op.config.valueMap[currentVal];
+            }
+        }
+        break;
     }
   });
 
   return currentLabels;
 };
 
-// Helper for consistent colors based on string
-const stringToColor = (str: string) => {
-  const colors = [
-    'bg-blue-500 border-blue-600 text-white',
-    'bg-emerald-500 border-emerald-600 text-white',
-    'bg-violet-500 border-violet-600 text-white',
-    'bg-amber-500 border-amber-600 text-white',
-    'bg-pink-500 border-pink-600 text-white',
-    'bg-cyan-500 border-cyan-600 text-white',
-  ];
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return colors[Math.abs(hash) % colors.length];
+// --- Sub-Components ---
+
+const ValueDistributionChart = ({ 
+    resources, 
+    targetKey, 
+    onMerge 
+}: { 
+    resources: GceResource[], 
+    targetKey: string,
+    onMerge: (from: string[], to: string) => void
+}) => {
+    const [selectedValues, setSelectedValues] = useState<Set<string>>(new Set());
+    const [mergeTarget, setMergeTarget] = useState('');
+
+    const distribution = useMemo(() => {
+        const counts: Record<string, number> = {};
+        resources.forEach(r => {
+            const val = r.labels[targetKey];
+            if (val) counts[val] = (counts[val] || 0) + 1;
+        });
+        return Object.entries(counts).sort((a,b) => b[1] - a[1]);
+    }, [resources, targetKey]);
+
+    const maxCount = distribution.length > 0 ? distribution[0][1] : 1;
+
+    const handleToggle = (val: string) => {
+        setSelectedValues(prev => {
+            const next = new Set(prev);
+            if (next.has(val)) next.delete(val); else next.add(val);
+            // If selecting, populate merge target with first selection if empty
+            if (!next.has(val) && mergeTarget === '') setMergeTarget(val); 
+            return next;
+        });
+    };
+
+    const executeMerge = () => {
+        if (!mergeTarget || selectedValues.size === 0) return;
+        const valuesToMerge = Array.from(selectedValues).filter(v => v !== mergeTarget) as string[];
+        if (valuesToMerge.length === 0) return;
+        
+        onMerge(valuesToMerge, mergeTarget);
+        setSelectedValues(new Set());
+        setMergeTarget('');
+    };
+
+    if (!targetKey) return <div className="text-center text-slate-400 py-10 italic">Select a Label Key to analyze</div>;
+
+    return (
+        <div className="space-y-4">
+            <div className="flex justify-between items-end">
+                <div>
+                    <h4 className="text-xs font-bold uppercase text-slate-500 mb-1">Value Distribution</h4>
+                    <p className="text-xs text-slate-400">Select inconsistencies to merge.</p>
+                </div>
+                {selectedValues.size > 0 && (
+                    <div className="flex items-center gap-2 bg-indigo-50 dark:bg-indigo-900/20 p-2 rounded-lg border border-indigo-100 dark:border-indigo-800 animate-in slide-in-from-right-4 fade-in">
+                        <span className="text-xs font-bold text-indigo-700 dark:text-indigo-300">Merge {selectedValues.size} into:</span>
+                        <Input 
+                            value={mergeTarget} 
+                            onChange={e => setMergeTarget(e.target.value)} 
+                            className="h-7 w-32 text-xs" 
+                            placeholder="Target value"
+                        />
+                        <Button size="xs" variant="primary" onClick={executeMerge} leftIcon={<Merge className="w-3 h-3"/>}>
+                            Fix
+                        </Button>
+                    </div>
+                )}
+            </div>
+
+            <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar pr-2">
+                {distribution.map(([val, count]) => {
+                    const isSelected = selectedValues.has(val);
+                    const percentage = (count / maxCount) * 100;
+                    
+                    return (
+                        <div 
+                            key={val}
+                            onClick={() => handleToggle(val)}
+                            className={`
+                                relative flex items-center gap-3 p-2 rounded-lg border cursor-pointer transition-all group
+                                ${isSelected 
+                                    ? 'bg-indigo-50 dark:bg-indigo-900/30 border-indigo-300 dark:border-indigo-500 shadow-sm' 
+                                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-600'}
+                            `}
+                        >
+                            <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${isSelected ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300 dark:border-slate-600'}`}>
+                                {isSelected && <Check className="w-3 h-3 text-white" />}
+                            </div>
+                            
+                            <div className="flex-1 z-10">
+                                <div className="flex justify-between text-xs mb-1">
+                                    <span className={`font-mono font-medium ${isSelected ? 'text-indigo-700 dark:text-indigo-300' : 'text-slate-700 dark:text-slate-300'}`}>{val}</span>
+                                    <span className="text-slate-400">{count}</span>
+                                </div>
+                                {/* Bar */}
+                                <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                                    <motion.div 
+                                        initial={{ width: 0 }}
+                                        animate={{ width: `${percentage}%` }}
+                                        className={`h-full rounded-full ${isSelected ? 'bg-indigo-500' : 'bg-slate-400 dark:bg-slate-600 group-hover:bg-slate-500'}`}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })}
+                {distribution.length === 0 && (
+                    <div className="text-center py-8 text-slate-400 text-xs">No values found for this key.</div>
+                )}
+            </div>
+        </div>
+    );
 };
 
-const stringToLightColor = (str: string) => {
-    const colors = [
-      'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800',
-      'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800',
-      'bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 border-violet-200 dark:border-violet-800',
-      'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800',
-      'bg-pink-50 dark:bg-pink-900/20 text-pink-700 dark:text-pink-300 border-pink-200 dark:border-pink-800',
-      'bg-cyan-50 dark:bg-cyan-900/20 text-cyan-700 dark:text-cyan-300 border-cyan-200 dark:border-cyan-800',
-    ];
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      hash = str.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    return colors[Math.abs(hash) % colors.length];
-};
-
-// --- Component ---
+// --- Main Component ---
 
 export const LabelingStudio: React.FC<LabelingStudioProps> = ({ 
   isOpen, onClose, selectedResources, onApply 
 }) => {
   const [pipeline, setPipeline] = useState<LabelOperation[]>([]);
   const [viewMode, setViewMode] = useState<'BUILD' | 'REVIEW'>('BUILD');
-  const [analyzingOpId, setAnalyzingOpId] = useState<string | null>(null);
-  const [showHelp, setShowHelp] = useState(false);
-  
-  // Initialize with ADD Standard Label by default for simplicity
+  const [activeTab, setActiveTab] = useState<'PIPELINE' | 'CLUSTERING'>('PIPELINE'); 
+  const [clusteringKey, setClusteringKey] = useState<string>('');
+  const [changeReason, setChangeReason] = useState('');
+
+  const allKeys = useMemo(() => {
+      const keys = new Set<string>();
+      selectedResources.forEach(r => Object.keys(r.labels).forEach(k => keys.add(k)));
+      return Array.from(keys).sort();
+  }, [selectedResources]);
+
   useEffect(() => {
-    if (isOpen && pipeline.length === 0) {
-      addOperation('ADD');
+    if (isOpen) {
+        if (allKeys.includes('environment')) setClusteringKey('environment');
+        else if (allKeys.length > 0) setClusteringKey(allKeys[0]);
+        setChangeReason('');
     }
     if (!isOpen) {
         setViewMode('BUILD'); 
+        setPipeline([]);
     }
-  }, [isOpen]);
+  }, [isOpen, allKeys]);
 
-  const addOperation = (type: OperationType) => {
+  const addOperation = (type: OperationType, initialConfig?: any) => {
     const newOp = { 
       ...DEFAULT_OPERATIONS[type], 
       id: Math.random().toString(36).substr(2, 9),
-      config: JSON.parse(JSON.stringify(DEFAULT_OPERATIONS[type].config))
+      config: initialConfig || JSON.parse(JSON.stringify(DEFAULT_OPERATIONS[type].config))
     };
     setPipeline(prev => [...prev, newOp]);
+    return newOp.id;
   };
 
   const removeOperation = (id: string) => {
@@ -222,43 +309,20 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
     }));
   };
 
-  const handleAutoDetect = async (opId: string) => {
-    if (selectedResources.length === 0) return;
-    setAnalyzingOpId(opId);
-    
-    try {
-        if ((window as any).aistudio) {
-             const hasKey = await (window as any).aistudio.hasSelectedApiKey();
-             if (!hasKey) {
-                 await (window as any).aistudio.openSelectKey();
-             }
-        }
+  const handleNormalizationMerge = (badValues: string[], targetValue: string) => {
+      // Check if we already have a normalization op for this key
+      const existingOp = pipeline.find(p => p.type === 'NORMALIZE_VALUES' && p.config.targetKey === clusteringKey);
+      
+      const newValueMap = existingOp ? { ...existingOp.config.valueMap } : {};
+      badValues.forEach(bad => newValueMap[bad] = targetValue);
 
-        const names = selectedResources.slice(0, 20).map(r => r.name);
-        const result = await analyzeNamingPatterns(names);
-
-        if (result.suggestedMode === 'PATTERN' && result.config?.delimiter) {
-            // Important: We need to use functional updates correctly to ensure latest state
-            setPipeline(prev => prev.map(p => {
-                if (p.id !== opId) return p;
-                
-                const newConfig = { ...p.config, delimiter: result.config.delimiter };
-                
-                if (result.config.mappings && Array.isArray(result.config.mappings)) {
-                    newConfig.mappings = result.config.mappings.map((m: any) => ({
-                        index: m.position,
-                        targetKey: m.key
-                    }));
-                }
-                
-                return { ...p, config: newConfig };
-            }));
-        }
-    } catch (error) {
-        console.error("Auto-detect failed", error);
-    } finally {
-        setAnalyzingOpId(null);
-    }
+      if (existingOp) {
+          updateConfig(existingOp.id, 'valueMap', newValueMap);
+      } else {
+          addOperation('NORMALIZE_VALUES', { targetKey: clusteringKey, valueMap: newValueMap });
+      }
+      
+      setActiveTab('PIPELINE'); // Switch back to pipeline to show the added rule
   };
 
   // --- Calculations ---
@@ -310,11 +374,9 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
     previewData.forEach((val, key) => {
       updates.set(key, val.final);
     });
-    onApply(updates);
+    onApply(updates, changeReason);
     onClose();
   };
-
-  const sampleResource = selectedResources[0];
 
   if (!isOpen) return null;
 
@@ -336,309 +398,191 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
       >
         {/* Header */}
         <div className="h-16 px-6 border-b border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md shrink-0 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-4">
             <div className="p-2 bg-indigo-600 rounded-lg text-white shadow-lg shadow-indigo-500/20">
               <Wand2 className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white leading-tight">Labeling Studio</h2>
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white leading-tight">Data Wrangling Studio</h2>
               <div className="flex items-center gap-2 text-xs text-slate-500">
                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                 <span>Processing {selectedResources.length} resources</span>
+                 <span>{selectedResources.length} resources selected</span>
               </div>
             </div>
           </div>
           
-          <div className="flex items-center gap-3">
-             <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={() => setShowHelp(true)}
-                className="hidden md:flex text-slate-500"
-                leftIcon={<HelpCircle className="w-4 h-4" />}
+          <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-900 p-1 rounded-lg">
+             <button 
+                onClick={() => { setActiveTab('PIPELINE'); setViewMode('BUILD'); }}
+                className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-2 ${activeTab === 'PIPELINE' ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
              >
-                How it works
-             </Button>
-             <button onClick={onClose} className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-full transition-colors text-slate-500">
-               <X className="w-5 h-5" />
+                <Layers className="w-4 h-4" /> Pipeline
+                {pipeline.length > 0 && <span className="bg-indigo-100 text-indigo-600 px-1.5 rounded-full text-[9px]">{pipeline.length}</span>}
+             </button>
+             <button 
+                onClick={() => { setActiveTab('CLUSTERING'); setViewMode('BUILD'); }}
+                className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-2 ${activeTab === 'CLUSTERING' ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+             >
+                <BarChart3 className="w-4 h-4" /> Analyze
              </button>
           </div>
+
+          <button onClick={onClose} className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-full transition-colors text-slate-500">
+             <X className="w-5 h-5" />
+          </button>
         </div>
 
         {/* --- BUILD MODE --- */}
         {viewMode === 'BUILD' && (
             <div className="flex-1 flex overflow-hidden animate-in fade-in duration-300">
                 
-                {/* LEFT: Rule Builder */}
+                {/* LEFT COLUMN: Controls */}
                 <div className="w-full md:w-[500px] bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col">
-                    <div className="p-4 border-b border-slate-100 dark:border-slate-800/50 bg-slate-50/50 dark:bg-slate-950/30 flex justify-between items-center">
-                        <h3 className="text-xs font-bold uppercase text-slate-500 tracking-wider flex items-center gap-2">
-                        <Layers className="w-4 h-4"/> Operations Pipeline
-                        </h3>
-                        {pipeline.length > 0 && (
-                            <button onClick={() => setPipeline([])} className="text-[10px] text-red-500 hover:underline">Clear All</button>
-                        )}
-                    </div>
-
-                    <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-slate-50/30 dark:bg-slate-950/20">
-                        {pipeline.length === 0 && (
-                        <div className="flex flex-col items-center justify-center py-16 text-slate-400 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
-                            <div className="w-12 h-12 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-3">
-                                <Plus className="w-6 h-6 text-slate-300" />
+                    
+                    {/* CLUSTERING VIEW */}
+                    {activeTab === 'CLUSTERING' && (
+                        <div className="flex-1 flex flex-col p-6 space-y-6 overflow-y-auto">
+                            <div className="bg-indigo-50 dark:bg-indigo-900/10 border border-indigo-100 dark:border-indigo-900/30 p-4 rounded-xl">
+                                <h3 className="text-sm font-bold text-indigo-900 dark:text-indigo-100 mb-2 flex items-center gap-2">
+                                    <Lightbulb className="w-4 h-4" /> Smart Normalization
+                                </h3>
+                                <p className="text-xs text-indigo-700 dark:text-indigo-300 leading-relaxed">
+                                    Identify inconsistent label values (e.g. <code>prod</code> vs <code>production</code>) and merge them into a single standard. 
+                                    This creates rules in your pipeline automatically.
+                                </p>
                             </div>
-                            <p className="text-sm font-medium">Pipeline is empty</p>
-                            <p className="text-xs mt-1">Add an operation below to start.</p>
+
+                            <div>
+                                <label className="text-[10px] uppercase font-bold text-slate-500 mb-2 block">Target Label Key</label>
+                                <Select value={clusteringKey} onChange={e => setClusteringKey(e.target.value)} className="w-full">
+                                    <option value="" disabled>Select a key...</option>
+                                    {allKeys.map(k => <option key={k} value={k}>{k}</option>)}
+                                </Select>
+                            </div>
+
+                            <div className="flex-1 min-h-0">
+                                <ValueDistributionChart 
+                                    resources={selectedResources} 
+                                    targetKey={clusteringKey} 
+                                    onMerge={handleNormalizationMerge}
+                                />
+                            </div>
                         </div>
-                        )}
-                        
-                        <AnimatePresence>
-                        {pipeline.map((op, idx) => (
-                            <motion.div
-                            key={op.id}
-                            layout
-                            initial={{ opacity: 0, x: -10 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            exit={{ opacity: 0, scale: 0.95 }}
-                            className={`relative bg-white dark:bg-slate-800/50 border rounded-xl shadow-sm transition-all group ${op.enabled ? 'border-slate-200 dark:border-slate-700' : 'opacity-60 border-slate-100 dark:border-slate-800'}`}
-                            >
-                            {/* Operation Header */}
-                            <div className="flex items-center gap-3 p-3 border-b border-slate-100 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-900/50 rounded-t-xl">
-                                <div className="flex flex-col items-center justify-center gap-1">
-                                    <span className="text-[10px] font-mono text-slate-300 dark:text-slate-600 bg-slate-100 dark:bg-slate-900 w-5 h-5 flex items-center justify-center rounded-full">{idx + 1}</span>
-                                    <ToggleSwitch checked={op.enabled} onChange={(v) => updateOperation(op.id, { enabled: v })} />
-                                </div>
-                                
-                                <div className="flex-1">
-                                    <div className="flex items-center gap-2 mb-1">
-                                        <Badge variant="neutral" className="text-[9px] px-1.5 py-0.5">
-                                            {OP_DESCRIPTIONS[op.type].label}
-                                        </Badge>
-                                    </div>
-                                    <select 
-                                        value={op.type} 
-                                        onChange={(e) => updateOperation(op.id, { type: e.target.value as OperationType, config: { ...DEFAULT_OPERATIONS[e.target.value as OperationType].config } })}
-                                        className="w-full bg-transparent text-sm font-bold text-slate-700 dark:text-slate-200 focus:outline-none cursor-pointer"
-                                    >
-                                        <option value="ADD">Add Standard Label</option>
-                                        <option value="REMOVE">Remove Label</option>
-                                        <option value="PATTERN">Split Name Pattern</option>
-                                        <option value="REPLACE">Text Replace</option>
-                                        <option value="EXTRACT_REGEX">Regex Extract</option>
-                                        <option value="CASE_TRANSFORM">Case Transform</option>
-                                    </select>
-                                </div>
+                    )}
 
-                                <button onClick={() => removeOperation(op.id)} className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-opacity p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg">
-                                    <Trash2 className="w-4 h-4" />
-                                </button>
+                    {/* PIPELINE VIEW */}
+                    {activeTab === 'PIPELINE' && (
+                        <div className="flex-1 flex flex-col">
+                            <div className="p-4 border-b border-slate-100 dark:border-slate-800/50 bg-slate-50/50 dark:bg-slate-950/30 flex justify-between items-center">
+                                <h3 className="text-xs font-bold uppercase text-slate-500 tracking-wider">Active Operations</h3>
+                                {pipeline.length > 0 && (
+                                    <button onClick={() => setPipeline([])} className="text-[10px] text-red-500 hover:underline">Clear All</button>
+                                )}
                             </div>
 
-                            {/* Config Body */}
-                            {op.enabled && (
-                                <div className="p-4 space-y-3">
-                                    
-                                    {op.type === 'ADD' && (
-                                    <div className="flex gap-3">
-                                        <div className="flex-1">
-                                            <label className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Key</label>
-                                            <Input 
-                                                placeholder="e.g. cost-center" 
-                                                value={op.config.key} 
-                                                onChange={e => updateConfig(op.id, 'key', e.target.value)} 
-                                                className="h-9 text-xs font-mono" 
-                                                error={validateKey(op.config.key || '') || undefined}
-                                            />
+                            <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-slate-50/30 dark:bg-slate-950/20">
+                                {pipeline.length === 0 && (
+                                    <div className="flex flex-col items-center justify-center py-16 text-slate-400 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
+                                        <div className="w-12 h-12 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-3">
+                                            <Plus className="w-6 h-6 text-slate-300" />
                                         </div>
-                                        <div className="flex-1">
-                                            <label className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Value</label>
-                                            <Input 
-                                                placeholder="e.g. cc-1234" 
-                                                value={op.config.value} 
-                                                onChange={e => updateConfig(op.id, 'value', e.target.value)} 
-                                                className="h-9 text-xs font-mono" 
-                                                error={validateValue(op.config.value || '') || undefined}
-                                            />
-                                        </div>
+                                        <p className="text-sm font-medium">Pipeline is empty</p>
+                                        <p className="text-xs mt-1">Add an operation below.</p>
                                     </div>
-                                    )}
-
-                                    {op.type === 'REMOVE' && (
-                                    <div>
-                                        <label className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Target Key to Remove</label>
-                                        <Input placeholder="e.g. temporary-tag" value={op.config.key} onChange={e => updateConfig(op.id, 'key', e.target.value)} className="h-9 text-xs font-mono border-red-200 focus:border-red-500" />
-                                    </div>
-                                    )}
-
-                                    {op.type === 'REPLACE' && (
-                                    <div className="flex items-end gap-2">
-                                        <div className="flex-1">
-                                            <label className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Find</label>
-                                            <Input placeholder="old-val" value={op.config.find} onChange={e => updateConfig(op.id, 'find', e.target.value)} className="h-9 text-xs font-mono" />
-                                        </div>
-                                        <ArrowRight className="w-4 h-4 text-slate-400 mb-3" />
-                                        <div className="flex-1">
-                                            <label className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Replace</label>
-                                            <Input placeholder="new-val" value={op.config.replace} onChange={e => updateConfig(op.id, 'replace', e.target.value)} className="h-9 text-xs font-mono" />
-                                        </div>
-                                    </div>
-                                    )}
-
-                                    {op.type === 'PATTERN' && (
-                                      <div className="space-y-4">
-                                         {/* Delimiter Selection */}
-                                         <div className="flex justify-between items-end">
-                                            <div>
-                                                <label className="text-[10px] uppercase font-bold text-slate-400 mb-1.5 block">Separator Character</label>
-                                                <div className="flex gap-1.5">
-                                                    {['-', '_', '.', '/'].map(char => (
-                                                        <button
-                                                            key={char}
-                                                            onClick={() => updateConfig(op.id, 'delimiter', char)}
-                                                            className={`w-9 h-9 rounded border flex items-center justify-center font-mono text-sm transition-all
-                                                            ${op.config.delimiter === char 
-                                                                ? 'bg-blue-600 border-blue-600 text-white shadow-md' 
-                                                                : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
-                                                        >
-                                                            {char}
-                                                        </button>
-                                                    ))}
-                                                    <Input 
-                                                        className="w-12 h-9 text-center font-mono" 
-                                                        placeholder="?" 
-                                                        value={op.config.delimiter} 
-                                                        onChange={e => updateConfig(op.id, 'delimiter', e.target.value)} 
-                                                        maxLength={1}
-                                                    />
+                                )}
+                                
+                                <AnimatePresence>
+                                {pipeline.map((op, idx) => (
+                                    <motion.div
+                                        key={op.id}
+                                        layout
+                                        initial={{ opacity: 0, x: -10 }}
+                                        animate={{ opacity: 1, x: 0 }}
+                                        exit={{ opacity: 0, scale: 0.95 }}
+                                        className={`relative bg-white dark:bg-slate-800/50 border rounded-xl shadow-sm transition-all group ${op.enabled ? 'border-slate-200 dark:border-slate-700' : 'opacity-60 border-slate-100 dark:border-slate-800'}`}
+                                    >
+                                        <div className="flex items-center gap-3 p-3 border-b border-slate-100 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-900/50 rounded-t-xl">
+                                            <div className="flex flex-col items-center justify-center gap-1">
+                                                <span className="text-[10px] font-mono text-slate-300 dark:text-slate-600 bg-slate-100 dark:bg-slate-900 w-5 h-5 flex items-center justify-center rounded-full">{idx + 1}</span>
+                                                <ToggleSwitch checked={op.enabled} onChange={(v) => updateOperation(op.id, { enabled: v })} />
+                                            </div>
+                                            
+                                            <div className="flex-1">
+                                                <Badge variant="neutral" className="text-[9px] px-1.5 py-0.5 mb-1">
+                                                    {OP_DESCRIPTIONS[op.type].label}
+                                                </Badge>
+                                                {/* Readable Summary */}
+                                                <div className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                                                    {op.type === 'ADD' && `${op.config.key} : ${op.config.value}`}
+                                                    {op.type === 'REMOVE' && `Delete "${op.config.key}"`}
+                                                    {op.type === 'NORMALIZE_VALUES' && `Fix values for "${op.config.targetKey}"`}
+                                                    {op.type === 'PATTERN' && `Split by "${op.config.delimiter}"`}
+                                                    {op.type === 'CASE_TRANSFORM' && `${op.config.casing} keys/values`}
+                                                    {op.type === 'REPLACE' && `Replace "${op.config.find}" with "${op.config.replace}"`}
+                                                    {!['ADD','REMOVE','NORMALIZE_VALUES','PATTERN','CASE_TRANSFORM','REPLACE'].includes(op.type) && 'Configure below...'}
                                                 </div>
                                             </div>
-                                            <Button 
-                                                size="sm" 
-                                                variant="secondary" 
-                                                onClick={() => handleAutoDetect(op.id)}
-                                                disabled={!!analyzingOpId}
-                                                className={`text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 border-indigo-100 dark:border-indigo-800 ${analyzingOpId === op.id ? 'animate-pulse' : ''}`}
-                                            >
-                                                {analyzingOpId === op.id ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Wand2 className="w-3 h-3 mr-1" />}
-                                                Auto-Detect
-                                            </Button>
-                                         </div>
 
-                                         {/* Token Visualizer */}
-                                         {sampleResource && op.config.delimiter && (
-                                           <div className="bg-slate-100 dark:bg-slate-950/60 p-4 rounded-xl border border-slate-200 dark:border-slate-800 overflow-x-auto relative mt-2">
-                                              <div className="text-[10px] uppercase font-bold text-slate-400 mb-4 flex items-center gap-1">
-                                                <Eye className="w-3 h-3" /> Preview: <span className="text-slate-600 dark:text-slate-300 normal-case ml-1 font-mono">{sampleResource.name}</span>
-                                              </div>
-                                              
-                                              <div className="flex items-start gap-4 pb-2">
-                                                 {sampleResource.name.split(op.config.delimiter).map((token, idx) => {
-                                                    const mapping = op.config.mappings?.find(m => m.index === idx);
-                                                    const assignedKey = mapping?.targetKey || '';
-                                                    const mappedColorClass = assignedKey ? stringToColor(assignedKey) : 'bg-white dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700';
-                                                    
-                                                    return (
-                                                      <div key={idx} className="flex flex-col items-center gap-2 group/token relative">
-                                                          {/* Token Bubble */}
-                                                          <Tooltip content={assignedKey ? `Mapped to: ${assignedKey}` : 'No Mapping'} placement="top">
-                                                            <div className={`
-                                                               px-3 py-1.5 rounded-md text-xs font-mono font-medium border shadow-sm transition-all z-10 min-w-[40px] text-center
-                                                               ${mappedColorClass}
-                                                            `}>
-                                                               {token}
+                                            <button onClick={() => removeOperation(op.id)} className="text-slate-400 hover:text-red-500 transition-colors p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg">
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
+                                        </div>
+
+                                        {/* Config Body */}
+                                        {op.enabled && (
+                                            <div className="p-4 space-y-3">
+                                                {op.type === 'ADD' && (
+                                                    <div className="flex gap-3">
+                                                        <Input placeholder="Key" value={op.config.key} onChange={e => updateConfig(op.id, 'key', e.target.value)} className="h-8 text-xs font-mono" />
+                                                        <Input placeholder="Value" value={op.config.value} onChange={e => updateConfig(op.id, 'value', e.target.value)} className="h-8 text-xs font-mono" />
+                                                    </div>
+                                                )}
+                                                {op.type === 'REMOVE' && (
+                                                    <Input placeholder="Key to remove" value={op.config.key} onChange={e => updateConfig(op.id, 'key', e.target.value)} className="h-8 text-xs font-mono" />
+                                                )}
+                                                {op.type === 'REPLACE' && (
+                                                    <div className="flex gap-3">
+                                                        <Input placeholder="Find text" value={op.config.find} onChange={e => updateConfig(op.id, 'find', e.target.value)} className="h-8 text-xs font-mono" />
+                                                        <Input placeholder="Replace with" value={op.config.replace} onChange={e => updateConfig(op.id, 'replace', e.target.value)} className="h-8 text-xs font-mono" />
+                                                    </div>
+                                                )}
+                                                {op.type === 'CASE_TRANSFORM' && (
+                                                    <Select value={op.config.casing} onChange={e => updateConfig(op.id, 'casing', e.target.value)} className="h-8 text-xs">
+                                                        <option value="lowercase">Lowercase (recommended)</option>
+                                                        <option value="uppercase">Uppercase</option>
+                                                    </Select>
+                                                )}
+                                                {op.type === 'NORMALIZE_VALUES' && (
+                                                    <div className="text-xs text-slate-500 bg-slate-50 dark:bg-slate-900 p-2 rounded border border-slate-100 dark:border-slate-800 font-mono">
+                                                        {Object.entries(op.config.valueMap || {}).map(([bad, good]) => (
+                                                            <div key={bad} className="flex justify-between">
+                                                                <span className="line-through opacity-50">{bad}</span>
+                                                                <ArrowRight className="w-3 h-3 mx-1 inline opacity-50" />
+                                                                <span className="text-emerald-600 font-bold">{good}</span>
                                                             </div>
-                                                          </Tooltip>
-                                                          
-                                                          {/* Visual Connector */}
-                                                          <div className={`h-4 w-px transition-colors ${assignedKey ? 'bg-indigo-400' : 'bg-slate-300 dark:bg-slate-700'}`}></div>
-                                                          
-                                                          {/* Input */}
-                                                          <div className="relative">
-                                                            <Input 
-                                                                placeholder={`Key...`} 
-                                                                value={assignedKey}
-                                                                className={`
-                                                                    h-7 text-[10px] text-center px-1 w-24 shadow-sm transition-all font-mono
-                                                                    ${assignedKey 
-                                                                        ? stringToLightColor(assignedKey) + ' font-bold'
-                                                                        : 'text-slate-400 border-slate-200 dark:border-slate-700 opacity-70 focus:opacity-100'}
-                                                                `}
-                                                                onChange={(e) => {
-                                                                const val = e.target.value;
-                                                                const newMappings = op.config.mappings?.filter(m => m.index !== idx) || [];
-                                                                if (val) newMappings.push({ index: idx, targetKey: val });
-                                                                updateConfig(op.id, 'mappings', newMappings);
-                                                                }}
-                                                            />
-                                                          </div>
-                                                          
-                                                          {/* Position Label */}
-                                                          <span className="text-[9px] text-slate-300 dark:text-slate-600 absolute -top-3">#{idx}</span>
-                                                      </div>
-                                                    );
-                                                 })}
-                                              </div>
-                                           </div>
-                                         )}
-                                      </div>
-                                    )}
-
-                                    {op.type === 'EXTRACT_REGEX' && (
-                                    <div className="space-y-3">
-                                        <div>
-                                            <label className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Regex Pattern</label>
-                                            <Input placeholder="^([a-z]+)-" value={op.config.regex} onChange={e => updateConfig(op.id, 'regex', e.target.value)} className="h-9 text-xs font-mono text-blue-600 dark:text-blue-400" />
-                                        </div>
-                                        <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded border border-blue-100 dark:border-blue-800/30">
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wide">Capture Group 1</span>
-                                                <ArrowRight className="w-3 h-3 text-blue-400" />
-                                                <Input placeholder="Target Key (e.g. env)" value={op.config.groups?.[0].targetKey} onChange={e => {
-                                                    const groups = [...(op.config.groups || [])];
-                                                    if(groups[0]) groups[0].targetKey = e.target.value;
-                                                    updateConfig(op.id, 'groups', groups);
-                                                }} className="h-8 text-xs font-mono w-full" />
+                                                        ))}
+                                                    </div>
+                                                )}
+                                                {/* Pattern config logic would go here similar to Add/Remove */}
                                             </div>
-                                        </div>
-                                    </div>
-                                    )}
+                                        )}
+                                    </motion.div>
+                                ))}
+                                </AnimatePresence>
+                            </div>
 
-                                    {op.type === 'CASE_TRANSFORM' && (
-                                    <div className="flex gap-2">
-                                        <button onClick={() => updateConfig(op.id, 'casing', 'lowercase')} className={`flex-1 py-2 text-xs font-medium border rounded-lg transition-all ${op.config.casing === 'lowercase' ? 'bg-blue-100 border-blue-300 text-blue-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600'}`}>lowercase</button>
-                                        <button onClick={() => updateConfig(op.id, 'casing', 'uppercase')} className={`flex-1 py-2 text-xs font-medium border rounded-lg transition-all ${op.config.casing === 'uppercase' ? 'bg-blue-100 border-blue-300 text-blue-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600'}`}>UPPERCASE</button>
-                                    </div>
-                                    )}
-                                    
-                                    <div className="pt-2 border-t border-slate-200 dark:border-slate-700/50">
-                                        <div className="flex items-start gap-2 text-[10px] text-slate-500">
-                                            <Info className="w-3 h-3 mt-0.5 text-indigo-500" />
-                                            <span>{OP_DESCRIPTIONS[op.type].desc}</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-                            </motion.div>
-                        ))}
-                        </AnimatePresence>
-                    </div>
-
-                    {/* Action Bar */}
-                    <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 grid grid-cols-2 gap-3">
-                        <div className="col-span-2 text-[10px] font-bold uppercase text-slate-400 tracking-wider mb-1">Standard Actions</div>
-                        <Tooltip content="Simple Key:Value assignment">
-                            <Button size="sm" variant="secondary" onClick={() => addOperation('ADD')} leftIcon={<Plus className="w-3 h-3"/>} className="justify-start">Add Label</Button>
-                        </Tooltip>
-                        <Tooltip content="Split resource names by character">
-                            <Button size="sm" variant="secondary" onClick={() => addOperation('PATTERN')} leftIcon={<Split className="w-3 h-3"/>} className="justify-start">Pattern Split</Button>
-                        </Tooltip>
-                        
-                        <div className="col-span-2 text-[10px] font-bold uppercase text-slate-400 tracking-wider mb-1 mt-2">Advanced</div>
-                        <Button size="sm" variant="ghost" onClick={() => addOperation('REPLACE')} leftIcon={<Replace className="w-3 h-3"/>} className="justify-start border border-slate-200 dark:border-slate-800">Find & Replace</Button>
-                        <Button size="sm" variant="ghost" onClick={() => addOperation('REMOVE')} leftIcon={<Eraser className="w-3 h-3"/>} className="justify-start text-red-600 hover:bg-red-50 border border-slate-200 dark:border-slate-800">Remove Key</Button>
-                    </div>
+                            {/* Action Bar */}
+                            <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 grid grid-cols-2 gap-3">
+                                <Button size="sm" variant="secondary" onClick={() => addOperation('ADD')} leftIcon={<Plus className="w-3 h-3"/>} className="justify-start">Add Label</Button>
+                                <Button size="sm" variant="secondary" onClick={() => addOperation('CASE_TRANSFORM')} leftIcon={<RefreshCw className="w-3 h-3"/>} className="justify-start">Change Case</Button>
+                                <Button size="sm" variant="secondary" onClick={() => addOperation('REPLACE')} leftIcon={<Replace className="w-3 h-3"/>} className="justify-start">Find Replace</Button>
+                                <Button size="sm" variant="ghost" onClick={() => addOperation('REMOVE')} leftIcon={<Eraser className="w-3 h-3"/>} className="justify-start text-red-500">Remove Key</Button>
+                            </div>
+                        </div>
+                    )}
                 </div>
 
-                {/* RIGHT: Live Preview */}
+                {/* RIGHT COLUMN: Live Preview (Always Visible) */}
                 <div className="flex-1 flex flex-col bg-slate-50/50 dark:bg-slate-950/50">
                     <div className="h-12 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-6 bg-white dark:bg-slate-900 shrink-0">
                         <div className="flex items-center gap-2">
@@ -662,66 +606,48 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
                             const resName = selectedResources.find(r => r.id === id)?.name || id;
                             const hasChanges = data.diff.length > 0;
 
+                            if (!hasChanges) return null; // Only show changed items in focus view?
+
                             return (
                                 <motion.div layoutId={id} key={id} className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
                                     <div className="px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
                                         <div className="flex items-center gap-2">
-                                            <div className={`w-1.5 h-1.5 rounded-full ${hasChanges ? 'bg-indigo-500' : 'bg-slate-300'}`}></div>
+                                            <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div>
                                             <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{resName}</span>
-                                            {selectedResources.find(r => r.id === id)?.type === 'INSTANCE' && <Badge variant="info" className="px-1 py-0 text-[9px]">VM</Badge>}
                                         </div>
-                                        <span className="text-[10px] font-mono text-slate-400">{id}</span>
                                     </div>
                                     
-                                    {hasChanges ? (
-                                        <div className="p-0 grid grid-cols-2 divide-x divide-slate-100 dark:divide-slate-800">
-                                            {/* Original */}
-                                            <div className="p-3 space-y-2 bg-slate-50/30 dark:bg-slate-900/30">
-                                                <div className="text-[9px] uppercase font-bold text-slate-400 mb-1">Original</div>
-                                                {Object.entries(data.original).length === 0 && <span className="text-xs text-slate-400 italic">No labels</span>}
-                                                <div className="flex flex-wrap gap-1.5">
-                                                    {Object.entries(data.original).map(([k, v]) => (
-                                                        <span key={k} className="inline-flex px-1.5 py-0.5 rounded text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
-                                                            <span className="font-semibold mr-1">{k}:</span>{v}
-                                                        </span>
-                                                    ))}
-                                                </div>
-                                            </div>
-
-                                            {/* Changes */}
-                                            <div className="p-3 space-y-2 bg-white dark:bg-slate-900">
-                                                <div className="text-[9px] uppercase font-bold text-slate-400 mb-1">Updates</div>
-                                                <div className="space-y-1.5">
-                                                    {data.diff.map((d, i) => (
-                                                        <div key={i} className={`flex items-center gap-2 text-xs p-1.5 rounded border ${d.type === 'ADD' ? 'bg-emerald-50 border-emerald-100 text-emerald-800 dark:bg-emerald-900/20 dark:border-emerald-900/30 dark:text-emerald-300' : d.type === 'REMOVE' ? 'bg-red-50 border-red-100 text-red-800 dark:bg-red-900/20 dark:border-red-900/30 dark:text-red-300' : 'bg-amber-50 border-amber-100 text-amber-800 dark:bg-amber-900/20 dark:border-amber-900/30 dark:text-amber-300'}`}>
-                                                            {d.type === 'ADD' && <Plus className="w-3 h-3" />}
-                                                            {d.type === 'REMOVE' && <Trash2 className="w-3 h-3" />}
-                                                            {d.type === 'MODIFY' && <RefreshCw className="w-3 h-3" />}
-                                                            
-                                                            <span className="font-bold font-mono">{d.key}:</span>
-                                                            
-                                                            {d.type === 'MODIFY' ? (
-                                                                <div className="flex items-center gap-1.5">
-                                                                    <span className="line-through opacity-50">{d.oldVal}</span>
-                                                                    <ArrowRight className="w-3 h-3 opacity-50" />
-                                                                    <span className="font-bold">{d.newVal}</span>
-                                                                </div>
-                                                            ) : d.type === 'REMOVE' ? (
-                                                                <span className="line-through opacity-70">{d.oldVal}</span>
-                                                            ) : (
-                                                                <span className="font-bold">{d.newVal}</span>
-                                                            )}
+                                    <div className="p-3 bg-white dark:bg-slate-900">
+                                        <div className="space-y-1.5">
+                                            {data.diff.map((d, i) => (
+                                                <div key={i} className={`flex items-center gap-2 text-xs p-1.5 rounded border ${d.type === 'ADD' ? 'bg-emerald-50 border-emerald-100 text-emerald-800 dark:bg-emerald-900/20 dark:border-emerald-900/30 dark:text-emerald-300' : d.type === 'REMOVE' ? 'bg-red-50 border-red-100 text-red-800 dark:bg-red-900/20 dark:border-red-900/30 dark:text-red-300' : 'bg-amber-50 border-amber-100 text-amber-800 dark:bg-amber-900/20 dark:border-amber-900/30 dark:text-amber-300'}`}>
+                                                    {d.type === 'ADD' && <Plus className="w-3 h-3" />}
+                                                    {d.type === 'REMOVE' && <Trash2 className="w-3 h-3" />}
+                                                    {d.type === 'MODIFY' && <RefreshCw className="w-3 h-3" />}
+                                                    
+                                                    <span className="font-bold font-mono">{d.key}:</span>
+                                                    
+                                                    {d.type === 'MODIFY' ? (
+                                                        <div className="flex items-center gap-1.5">
+                                                            <span className="line-through opacity-50">{d.oldVal}</span>
+                                                            <ArrowRight className="w-3 h-3 opacity-50" />
+                                                            <span className="font-bold">{d.newVal}</span>
                                                         </div>
-                                                    ))}
+                                                    ) : d.type === 'REMOVE' ? (
+                                                        <span className="line-through opacity-70">{d.oldVal}</span>
+                                                    ) : (
+                                                        <span className="font-bold">{d.newVal}</span>
+                                                    )}
                                                 </div>
-                                            </div>
+                                            ))}
                                         </div>
-                                    ) : (
-                                        <div className="p-4 text-center text-xs text-slate-400 italic">No changes pending for this resource.</div>
-                                    )}
+                                    </div>
                                 </motion.div>
                             );
                         })}
+                        {stats.mods + stats.adds + stats.dels === 0 && (
+                            <div className="text-center text-slate-400 py-10 italic">No changes generated yet.</div>
+                        )}
                         </div>
                     </div>
                 </div>
@@ -731,42 +657,39 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
         {/* --- REVIEW MODE --- */}
         {viewMode === 'REVIEW' && (
             <div className="flex-1 bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-8 animate-in zoom-in-95 duration-300">
-                {/* Reused Review UI from previous version, kept concise */}
-                <div className="max-w-2xl w-full bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 p-8 text-center">
-                    <div className="w-16 h-16 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-full flex items-center justify-center mx-auto mb-6">
+                <div className="max-w-xl w-full bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 p-8 text-center">
+                    <div className="w-16 h-16 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-full flex items-center justify-center mx-auto mb-6">
                         <Check className="w-8 h-8" />
                     </div>
                     
-                    <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">Confirm Label Updates</h2>
-                    <p className="text-slate-500 dark:text-slate-400 mb-8 max-w-md mx-auto">
-                        You are about to update <strong>{stats.totalResources} resources</strong>. 
-                        This action will be recorded in the audit logs.
+                    <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">Ready to Apply?</h2>
+                    <p className="text-slate-500 dark:text-slate-400 mb-6 max-w-sm mx-auto">
+                        This operation will update <strong>{stats.totalResources} resources</strong>. A history snapshot will be created automatically.
                     </p>
 
-                    <div className="grid grid-cols-3 gap-4 mb-8">
-                        <div className="p-4 bg-emerald-50 dark:bg-emerald-900/10 rounded-xl border border-emerald-100 dark:border-emerald-900/30">
-                            <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{stats.adds}</div>
-                            <div className="text-xs font-bold text-emerald-800 dark:text-emerald-500 uppercase tracking-wider">Additions</div>
-                        </div>
-                        <div className="p-4 bg-amber-50 dark:bg-amber-900/10 rounded-xl border border-amber-100 dark:border-amber-900/30">
-                            <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">{stats.mods}</div>
-                            <div className="text-xs font-bold text-amber-800 dark:text-amber-500 uppercase tracking-wider">Modifications</div>
-                        </div>
-                        <div className="p-4 bg-red-50 dark:bg-red-900/10 rounded-xl border border-red-100 dark:border-red-900/30">
-                            <div className="text-2xl font-bold text-red-600 dark:text-red-400">{stats.dels}</div>
-                            <div className="text-xs font-bold text-red-800 dark:text-red-500 uppercase tracking-wider">Deletions</div>
-                        </div>
+                    <div className="bg-slate-50 dark:bg-slate-950/50 rounded-xl p-4 border border-slate-100 dark:border-slate-800 mb-8 text-left">
+                        <label className="text-[10px] uppercase font-bold text-slate-500 mb-2 block flex items-center gap-2">
+                            <MessageSquare className="w-3 h-3" /> Change Reason (Audit Log)
+                        </label>
+                        <Input 
+                            value={changeReason}
+                            onChange={e => setChangeReason(e.target.value)}
+                            placeholder="e.g. Q3 Cost Center cleanup..."
+                            className="bg-white dark:bg-slate-900"
+                            autoFocus
+                        />
                     </div>
 
                     <div className="flex items-center justify-center gap-4">
-                        <Button variant="ghost" size="lg" onClick={() => setViewMode('BUILD')}>Back to Edit</Button>
+                        <Button variant="ghost" size="lg" onClick={() => setViewMode('BUILD')}>Back to Rules</Button>
                         <Button 
                             variant="primary" 
                             size="lg" 
-                            className="px-8 shadow-xl shadow-indigo-500/30"
+                            className="px-8 shadow-xl shadow-emerald-500/30 bg-emerald-600 hover:bg-emerald-500"
                             onClick={handleApply}
+                            disabled={!changeReason}
                         >
-                            Commit Changes
+                            Confirm Update
                         </Button>
                     </div>
                 </div>
@@ -778,7 +701,7 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
             <div className="h-20 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-8 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-2 text-sm text-slate-500">
                     <InfoTip icon={Lightbulb}>
-                        Tip: You can extract tags from resource names using <strong className="font-mono bg-slate-100 dark:bg-slate-800 px-1 rounded">Split Pattern</strong>.
+                        Tip: Use <strong>Analyze</strong> to find inconsistent values like 'prod' vs 'production'.
                     </InfoTip>
                 </div>
                 <div className="flex gap-4">
@@ -796,48 +719,6 @@ export const LabelingStudio: React.FC<LabelingStudioProps> = ({
                 </div>
             </div>
         )}
-
-        {/* Help Modal */}
-        <Modal 
-            isOpen={showHelp} 
-            onClose={() => setShowHelp(false)} 
-            title="Labeling Studio Guide"
-        >
-            <div className="p-4 space-y-6">
-                <div className="flex items-start gap-4 bg-indigo-50 dark:bg-indigo-900/20 p-4 rounded-xl">
-                    <BookOpen className="w-6 h-6 text-indigo-500 shrink-0" />
-                    <div>
-                        <h4 className="font-bold text-indigo-900 dark:text-indigo-100 mb-1">Batch Operations</h4>
-                        <p className="text-sm text-indigo-700 dark:text-indigo-300">
-                            The Labeling Studio allows you to apply multiple operations sequentially to a selected group of resources.
-                            Operations are processed from top to bottom.
-                        </p>
-                    </div>
-                </div>
-
-                <div className="space-y-4">
-                    <h5 className="text-xs font-bold uppercase text-slate-500 tracking-wider border-b border-slate-200 dark:border-slate-700 pb-2">Available Operations</h5>
-                    <div className="grid grid-cols-1 gap-3">
-                        {Object.entries(OP_DESCRIPTIONS).map(([key, op]) => (
-                            <div key={key} className="flex items-start gap-3 p-3 rounded-lg border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900">
-                                <div className="p-2 bg-slate-100 dark:bg-slate-800 rounded-lg text-slate-500">
-                                    <op.icon className="w-4 h-4" />
-                                </div>
-                                <div>
-                                    <div className="text-sm font-bold text-slate-800 dark:text-slate-200">{op.label}</div>
-                                    <div className="text-xs text-slate-500">{op.desc}</div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-
-                <div className="bg-amber-50 dark:bg-amber-900/10 p-4 rounded-xl flex gap-3 text-amber-800 dark:text-amber-400 text-sm">
-                    <AlertCircle className="w-5 h-5 shrink-0" />
-                    <p>Changes are only applied when you click "Commit Changes" in the review screen. You can safely experiment with the pipeline.</p>
-                </div>
-            </div>
-        </Modal>
       </motion.div>
     </div>
   );

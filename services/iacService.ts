@@ -15,7 +15,41 @@ const getTerraformType = (type: string): string => {
     }
 };
 
-export const generateTerraformCode = (resources: GceResource[], projectId: string): string => {
+const getPulumiType = (type: string): string => {
+    switch (type) {
+        case 'INSTANCE': return 'gcp.compute.Instance';
+        case 'DISK': return 'gcp.compute.Disk';
+        case 'BUCKET': return 'gcp.storage.Bucket';
+        case 'CLOUD_SQL': return 'gcp.sql.DatabaseInstance';
+        case 'GKE_CLUSTER': return 'gcp.container.Cluster';
+        case 'CLOUD_RUN': return 'gcp.cloudrunv2.Service';
+        default: return 'gcp.compute.Instance';
+    }
+};
+
+const getGcloudCommand = (r: GceResource): string | null => {
+    const labels = Object.entries(r.labels).map(([k,v]) => `${k}=${v}`).join(',');
+    if (!labels) return null;
+
+    switch (r.type) {
+        case 'INSTANCE': 
+            return `gcloud compute instances update ${r.name} --zone=${r.zone} --update-labels=${labels}`;
+        case 'DISK': 
+            return `gcloud compute disks update ${r.name} --zone=${r.zone} --update-labels=${labels}`;
+        case 'BUCKET': 
+            return `gcloud storage buckets update gs://${r.name} --update-labels=${labels}`;
+        case 'GKE_CLUSTER':
+            return `gcloud container clusters update ${r.name} --location=${r.zone} --update-labels=${labels}`;
+        case 'CLOUD_SQL':
+            return `gcloud sql instances patch ${r.name} --update-labels=${labels}`;
+        case 'CLOUD_RUN':
+            return `gcloud run services update ${r.name} --location=${r.zone} --update-labels=${labels}`;
+        default:
+            return `# Resource type ${r.type} requires manual update`;
+    }
+};
+
+export const generateTerraformCode = (resources: GceResource[], projectId: string, mode: 'FULL' | 'LABELS_ONLY' = 'FULL'): string => {
     const lines: string[] = [];
     
     lines.push(`# =============================================================================`);
@@ -24,21 +58,39 @@ export const generateTerraformCode = (resources: GceResource[], projectId: strin
     lines.push(`# Timestamp: ${new Date().toISOString()}`);
     lines.push(`# =============================================================================\n`);
 
+    if (mode === 'LABELS_ONLY') {
+        lines.push(`# INSTRUCTIONS: Copy these label blocks into your existing resource definitions.`);
+        lines.push(`# This ensures you apply governance without overwriting infrastructure config.\n`);
+    }
+
     resources.forEach(r => {
         const tfType = getTerraformType(r.type);
         const tfId = sanitizeTfId(r.name);
         
+        if (mode === 'LABELS_ONLY') {
+            lines.push(`# Resource: ${r.name} (${tfType})`);
+            if (r.labels && Object.keys(r.labels).length > 0) {
+                lines.push(`labels = {`);
+                Object.entries(r.labels).forEach(([k, v]) => {
+                    lines.push(`  "${k}" = "${v}"`);
+                });
+                lines.push(`}\n`);
+            } else {
+                lines.push(`# No labels assigned\n`);
+            }
+            return;
+        }
+
+        // FULL Mode
         lines.push(`resource "${tfType}" "${tfId}" {`);
         lines.push(`  name    = "${r.name}"`);
         lines.push(`  project = "${projectId}"`);
         
         if (r.zone && r.zone !== 'global') {
-            // Some resources use 'location', others 'zone'
             const locationKey = r.type === 'CLOUD_RUN' || r.type === 'GKE_CLUSTER' ? 'location' : 'zone';
             lines.push(`  ${locationKey}    = "${r.zone}"`);
         }
 
-        // Labels Block - The core value prop
         if (r.labels && Object.keys(r.labels).length > 0) {
             lines.push(`\n  labels = {`);
             Object.entries(r.labels).forEach(([k, v]) => {
@@ -49,13 +101,63 @@ export const generateTerraformCode = (resources: GceResource[], projectId: strin
             lines.push(`  # No labels currently assigned`);
         }
 
-        // Add lifecycle ignore to prevent accidental destruction of other props
         lines.push(`\n  lifecycle {`);
-        lines.push(`    # Prevent Terraform from reverting changes made in the dashboard`);
-        lines.push(`    ignore_changes = [all]`);
+        lines.push(`    ignore_changes = [all] # Safety mechanism for drift export`);
         lines.push(`  }`);
 
         lines.push(`}\n`);
+    });
+
+    return lines.join('\n');
+};
+
+export const generatePulumiCode = (resources: GceResource[], projectId: string): string => {
+    const lines: string[] = [];
+    lines.push(`import * as gcp from "@pulumi/gcp";\n`);
+    lines.push(`// Yalla Label - Pulumi Export`);
+    lines.push(`// Project: ${projectId}\n`);
+
+    resources.forEach(r => {
+        const type = getPulumiType(r.type);
+        const name = sanitizeTfId(r.name);
+        
+        lines.push(`const ${name} = new ${type}("${r.name}", {`);
+        lines.push(`    name: "${r.name}",`);
+        lines.push(`    project: "${projectId}",`);
+        
+        if (r.zone && r.zone !== 'global') {
+            const key = r.type === 'CLOUD_RUN' || r.type === 'GKE_CLUSTER' ? 'location' : 'zone';
+            lines.push(`    ${key}: "${r.zone}",`);
+        }
+
+        if (r.labels && Object.keys(r.labels).length > 0) {
+            lines.push(`    labels: {`);
+            Object.entries(r.labels).forEach(([k, v]) => {
+                lines.push(`        "${k}": "${v}",`);
+            });
+            lines.push(`    },`);
+        }
+
+        lines.push(`}, { protect: true, ignoreChanges: ["*"] });\n`);
+    });
+
+    return lines.join('\n');
+};
+
+export const generateGcloudScript = (resources: GceResource[], projectId: string): string => {
+    const lines: string[] = [];
+    lines.push(`#!/bin/bash`);
+    lines.push(`# Yalla Label - Immediate Drift Remediation Script`);
+    lines.push(`# CAUTION: This will directly modify resources in project: ${projectId}\n`);
+    
+    lines.push(`gcloud config set project ${projectId}\n`);
+
+    resources.forEach(r => {
+        const cmd = getGcloudCommand(r);
+        if (cmd) {
+            lines.push(`echo "Updating ${r.name}..."`);
+            lines.push(cmd);
+        }
     });
 
     return lines.join('\n');
@@ -71,7 +173,6 @@ export const generateTerraformImports = (resources: GceResource[], projectId: st
         const tfType = getTerraformType(r.type);
         const tfId = sanitizeTfId(r.name);
         
-        // Construct GCP Resource ID format
         let gcpId = '';
         if (r.type === 'INSTANCE' || r.type === 'DISK') {
             gcpId = `projects/${projectId}/zones/${r.zone}/${tfType === 'google_compute_disk' ? 'disks' : 'instances'}/${r.name}`;

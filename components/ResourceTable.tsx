@@ -1,11 +1,11 @@
 
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { GceResource, FilterConfig, SavedView } from '../types';
 import { 
-  CheckSquare, Square, Search, FilterX, ChevronDown, ChevronRight, Layers, Tag,
-  Server, Cloud, Box, Loader2, ArrowUp, ArrowDown, ArrowUpDown, AlertCircle, RefreshCw
+  FilterX, ChevronDown, ChevronRight, Tag,
+  Cloud, RefreshCw, ArrowUp, ArrowDown, ArrowUpDown
 } from 'lucide-react';
-import { Button, Card, Badge, Tooltip, GlassCard } from './DesignSystem';
+import { Button } from './DesignSystem';
 import { ResourceRow } from './ResourceRow';
 import { ResourceFilters, BulkActionBar, PaginationControl } from './TableControls';
 import { AuditHistoryModal } from './AuditHistoryModal';
@@ -15,9 +15,9 @@ import { useResourceFilter, calculateFacetedCounts, SortConfig } from '../hooks/
 import { TableRowSkeleton } from './Skeletons';
 import { motion, AnimatePresence } from 'framer-motion';
 
-// Fix for framer-motion type mismatches
-const MotionTr = motion.tr as any;
 const MotionDiv = motion.div as any;
+
+export const GRID_TEMPLATE = "grid grid-cols-[64px_minmax(240px,1.5fr)_minmax(140px,1fr)_minmax(160px,1fr)_minmax(140px,1fr)_minmax(200px,2fr)_100px] gap-4 items-center";
 
 interface ResourceTableProps {
   resources: GceResource[];
@@ -30,7 +30,7 @@ interface ResourceTableProps {
   onApplyLabels: (id: string, labels: Record<string, string>) => void;
   onUpdateLabels: (id: string, labels: Record<string, string>) => void;
   onRevert: (id: string) => void;
-  onBulkUpdateLabels?: (updates: Map<string, Record<string, string>>) => void;
+  onBulkUpdateLabels?: (updates: Map<string, Record<string, string>>, reason?: string) => void;
   onRefresh?: () => void;
   isLoading?: boolean;
   batchProgress?: { processed: number, total: number, status: 'updating' | 'rolling-back' } | null;
@@ -134,6 +134,15 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
       });
   };
 
+  const handleSort = (key: string) => {
+      setSortConfig(current => {
+          if (current?.key === key) {
+              return current.direction === 'asc' ? { key, direction: 'desc' } : null;
+          }
+          return { key, direction: 'asc' };
+      });
+  };
+
   const toggleSelectAll = useCallback(() => {
      setSelectedIds(prev => {
         if (prev.size > 0 && prev.size === filteredResources.length) {
@@ -151,9 +160,9 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
     });
   }, []);
 
-  const executeBulkStudioUpdates = useCallback((updates: Map<string, Record<string, string>>) => {
+  const executeBulkStudioUpdates = useCallback((updates: Map<string, Record<string, string>>, reason?: string) => {
     if (!onBulkUpdateLabels) return;
-    onBulkUpdateLabels(updates);
+    onBulkUpdateLabels(updates, reason);
     setSelectedIds(new Set());
   }, [onBulkUpdateLabels]);
 
@@ -180,7 +189,7 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
   }, [filteredResources]);
 
   const renderEmptyState = () => {
-     if (isLoading && resources.length === 0) return null; // Show skeletons instead
+     if (isLoading && resources.length === 0) return null; 
      
      if (resources.length === 0) {
         return (
@@ -230,12 +239,32 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
     resources.filter(r => selectedIds.has(r.id)), 
   [resources, selectedIds]);
 
-  // Use selected resources if any, otherwise all filtered resources for export
   const exportResourcesList = selectedResourcesList.length > 0 ? selectedResourcesList : filteredResources;
+
+  // Header Sort Helper
+  const SortHeader = ({ label, sortKey, className = "" }: { label: string, sortKey?: string, className?: string }) => {
+      const isActive = sortConfig?.key === sortKey;
+      return (
+          <div 
+            className={`text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider ${sortKey ? 'cursor-pointer hover:text-indigo-500 transition-colors select-none' : ''} ${className}`}
+            onClick={() => sortKey && handleSort(sortKey)}
+          >
+              <div className="flex items-center gap-1.5">
+                  {label}
+                  {sortKey && (
+                      <div className={`flex flex-col ${isActive ? 'text-indigo-500' : 'text-slate-300'}`}>
+                          {isActive && sortConfig?.direction === 'asc' ? <ArrowUp className="w-3 h-3" /> : 
+                           isActive && sortConfig?.direction === 'desc' ? <ArrowDown className="w-3 h-3" /> :
+                           <ArrowUpDown className="w-3 h-3 opacity-50" />}
+                      </div>
+                  )}
+              </div>
+          </div>
+      )
+  };
 
   return (
     <div className="flex flex-col relative h-auto">
-       {/* Filters Container - Sticky z-50 to stay on top */}
        <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm mb-6 z-50 sticky top-4">
            <ResourceFilters 
               config={filterConfig} 
@@ -257,6 +286,28 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
               onRefresh={onRefresh}
               isRefreshing={isLoading}
            />
+
+           {/* Integrated Sort Headers Row */}
+           <div className={`
+                ${GRID_TEMPLATE} px-4 py-3 border-t border-slate-200 dark:border-slate-800 
+                bg-slate-50/50 dark:bg-slate-900/50 transition-colors
+                min-w-[1000px] overflow-x-auto
+           `}>
+                <div className="flex justify-center">
+                    <input 
+                        type="checkbox" 
+                        className="rounded border-slate-300 w-4 h-4 cursor-pointer" 
+                        onChange={toggleSelectAll} 
+                        checked={selectedIds.size > 0 && selectedIds.size === filteredResources.length} 
+                    />
+                </div>
+                <SortHeader label="Resource Name" sortKey="name" />
+                <SortHeader label="Type / Location" sortKey="type" />
+                <SortHeader label="Configuration" />
+                <SortHeader label="State" sortKey="status" />
+                <SortHeader label="Labels & Tags" />
+                <SortHeader label="Actions" className="text-right pr-2" />
+           </div>
 
            {batchProgress && (
               <div className="absolute top-0 left-0 right-0 h-1 z-50 overflow-hidden rounded-t-2xl">
@@ -295,61 +346,56 @@ export const ResourceTable: React.FC<ResourceTableProps> = React.memo(({
           projectId={localStorage.getItem('lastProjectId') || 'default-project'}
        />
 
-       <div className="relative min-h-[400px]">
-          {/* Responsive Table Wrapper */}
-          <div className="overflow-x-auto w-full pb-4">
-            <table className="w-full text-left text-sm border-separate border-spacing-y-4 min-w-[1000px]">
-               <tbody>
-                 {/* Show skeletons only if we have NO resources yet and are loading */}
-                 {isLoading && resources.length === 0 && Array.from({ length: 5 }).map((_, i) => <TableRowSkeleton key={i} />)}
-                 
-                 <AnimatePresence mode="popLayout">
-                   {displayItems.map((item) => {
-                     if (item.type === 'header') {
-                        return (
-                            <MotionTr 
-                              key={`group-${item.key}`} 
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              exit={{ opacity: 0 }}
-                              className="cursor-pointer" 
-                              onClick={() => toggleGroupCollapse(item.key)}
-                            >
-                                <td colSpan={7} className="px-1 py-4">
-                                    <div className="flex items-center gap-3 w-full">
-                                        <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800"></div>
-                                        <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-3 py-1 rounded-full">
-                                            {item.isCollapsed ? <ChevronRight className="w-3.5 h-3.5"/> : <ChevronDown className="w-3.5 h-3.5"/>}
-                                            <Tag className="w-3.5 h-3.5 text-indigo-500" />
-                                            <span className="text-indigo-600 dark:text-indigo-400">{item.label}</span>
-                                            <span className="bg-white dark:bg-slate-900 text-slate-400 px-1.5 rounded ml-1">{item.count}</span>
-                                        </div>
-                                        <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800"></div>
-                                    </div>
-                                </td>
-                            </MotionTr>
-                        );
-                     }
-                     const r = item.data;
-                     return (
-                       <ResourceRow 
-                         key={r.id} 
-                         resource={r} 
-                         isSelected={selectedIds.has(r.id)}
-                         onToggleSelect={toggleSelect}
-                         onUpdate={onUpdateLabels}
-                         onApply={onApplyLabels}
-                         onRevert={onRevert}
-                         onViewHistory={setHistoryResource}
-                       />
-                     );
-                   })}
-                 </AnimatePresence>
-               </tbody>
-            </table>
+       <div className="relative min-h-[400px] overflow-x-auto">
+          <div className="min-w-[1000px] pb-4">
+               {isLoading && resources.length === 0 && (
+                   <div className="space-y-4">
+                       {Array.from({ length: 5 }).map((_, i) => <TableRowSkeleton key={i} />)}
+                   </div>
+               )}
+               
+               <AnimatePresence mode="popLayout">
+                 {displayItems.map((item) => {
+                   if (item.type === 'header') {
+                      return (
+                          <MotionDiv 
+                            key={`group-${item.key}`} 
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="cursor-pointer mb-2" 
+                            onClick={() => toggleGroupCollapse(item.key)}
+                          >
+                              <div className="flex items-center gap-3 w-full px-4 py-3">
+                                  <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800"></div>
+                                  <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-3 py-1 rounded-full">
+                                      {item.isCollapsed ? <ChevronRight className="w-3.5 h-3.5"/> : <ChevronDown className="w-3.5 h-3.5"/>}
+                                      <Tag className="w-3.5 h-3.5 text-indigo-500" />
+                                      <span className="text-indigo-600 dark:text-indigo-400">{item.label}</span>
+                                      <span className="bg-white dark:bg-slate-900 text-slate-400 px-1.5 rounded ml-1">{item.count}</span>
+                                  </div>
+                                  <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800"></div>
+                              </div>
+                          </MotionDiv>
+                      );
+                   }
+                   const r = item.data;
+                   return (
+                     <ResourceRow 
+                       key={r.id} 
+                       resource={r} 
+                       isSelected={selectedIds.has(r.id)}
+                       onToggleSelect={toggleSelect}
+                       onUpdate={onUpdateLabels}
+                       onApply={onApplyLabels}
+                       onRevert={onRevert}
+                       onViewHistory={setHistoryResource}
+                     />
+                   );
+                 })}
+               </AnimatePresence>
           </div>
           
-          {/* Empty state or loading feedback */}
           {(!isLoading || resources.length > 0) && filteredResources.length === 0 && renderEmptyState()}
        </div>
 

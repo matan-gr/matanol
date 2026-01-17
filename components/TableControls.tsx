@@ -7,10 +7,11 @@ import {
   Server, Database, Cloud, 
   HardDrive, Image as ImageIcon, Camera, Box,
   Bookmark, SlidersHorizontal, Trash2, Ship,
-  Wand2, ChevronLeft, ChevronRight, Code, FileText, ChevronDown
+  Code, FileText, ChevronDown, ChevronLeft, ChevronRight, ShieldAlert
 } from 'lucide-react';
 import { Button, Input, MultiSelect, ToggleSwitch, Select, Badge } from './DesignSystem';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useDebounce } from '../hooks/useDebounce';
 
 // --- Filters ---
 export interface ResourceFiltersProps {
@@ -18,7 +19,7 @@ export interface ResourceFiltersProps {
   onChange: (config: FilterConfig) => void;
   show: boolean;
   onDownload: () => void;
-  onExportTerraform: () => void; // New Prop
+  onExportTerraform: () => void;
   onToggleShow: () => void;
   onSaveView: (name: string) => void;
   savedViews?: SavedView[]; 
@@ -58,9 +59,26 @@ export const ResourceFilters = React.memo(({
 }: ResourceFiltersProps) => {
   const [viewName, setViewName] = useState('');
   const [isViewsOpen, setIsViewsOpen] = useState(false);
-  const [isExportOpen, setIsExportOpen] = useState(false); // Export Menu State
+  const [isExportOpen, setIsExportOpen] = useState(false);
+  
+  // Local state for debouncing
+  const [localSearch, setLocalSearch] = useState(config.search);
+  const debouncedSearch = useDebounce(localSearch, 300);
+
   const viewsRef = useRef<HTMLDivElement>(null);
   const exportRef = useRef<HTMLDivElement>(null);
+
+  // Sync external config change to local state (e.g. clearing filters)
+  useEffect(() => {
+    setLocalSearch(config.search);
+  }, [config.search]);
+
+  // Sync debounced value to parent
+  useEffect(() => {
+    if (debouncedSearch !== config.search) {
+      onChange({ ...config, search: debouncedSearch });
+    }
+  }, [debouncedSearch, onChange, config]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -89,7 +107,10 @@ export const ResourceFilters = React.memo(({
   // Helper to remove a specific filter part
   const removeFilter = (type: keyof FilterConfig, value?: string | number) => {
       const newConfig = { ...config };
-      if (type === 'search') newConfig.search = '';
+      if (type === 'search') {
+          newConfig.search = '';
+          setLocalSearch(''); // Clear local too
+      }
       if (type === 'statuses' && value) newConfig.statuses = config.statuses.filter(s => s !== value);
       if (type === 'types' && value) newConfig.types = config.types.filter(t => t !== value);
       if (type === 'zones' && value) newConfig.zones = config.zones.filter(z => z !== value);
@@ -99,6 +120,10 @@ export const ResourceFilters = React.memo(({
       if (type === 'dateEnd') newConfig.dateEnd = '';
       if (type === 'labels' && typeof value === 'number') newConfig.labels = config.labels.filter((_, i) => i !== value);
       if (type === 'showUnlabeledOnly') newConfig.showUnlabeledOnly = false;
+      if (type === 'showViolationsOnly') {
+          newConfig.showViolationsOnly = false;
+          newConfig.violatedPolicyId = undefined; // Clear specific policy filter too
+      }
       onChange(newConfig);
   };
 
@@ -112,6 +137,7 @@ export const ResourceFilters = React.memo(({
       if (config.dateStart) count++;
       if (config.dateEnd) count++;
       if (config.showUnlabeledOnly) count++;
+      if (config.showViolationsOnly) count++;
       config.labels.forEach(l => { if (l.key) count++; });
       return count;
   }, [config]);
@@ -125,8 +151,8 @@ export const ResourceFilters = React.memo(({
                 <Input 
                 icon={<Search className="w-4 h-4"/>} 
                 placeholder="Search by name, labels, tags, or IDs..." 
-                value={config.search} 
-                onChange={e => onChange({ ...config, search: e.target.value })}
+                value={localSearch} 
+                onChange={e => setLocalSearch(e.target.value)}
                 className="w-full shadow-sm border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/80 focus:ring-2 focus:ring-blue-500/20"
                 />
                 
@@ -301,10 +327,6 @@ export const ResourceFilters = React.memo(({
          </div>
       </div>
 
-      {/* Visual Active Filters (The "Chips" Area) */}
-      {/* We check show activeFiltersCount (which excludes types) > 0 OR showUnlabeledOnly/search etc.
-          Logic: If any filter BESIDES types is active, and the panel is closed, show these chips.
-      */}
       {activeFiltersCount > 0 && !show && (
         <div className="px-4 pb-3 flex flex-wrap gap-2 items-center animate-in fade-in slide-in-from-top-1">
             {config.search && (
@@ -313,7 +335,6 @@ export const ResourceFilters = React.memo(({
                     <button onClick={() => removeFilter('search')} className="hover:bg-blue-200 dark:hover:bg-blue-800 rounded-full p-0.5"><X className="w-3 h-3"/></button>
                 </Badge>
             )}
-            {/* Note: Types are now visible above, so we don't render them here to avoid duplication */}
             {config.statuses.map(s => (
                 <Badge key={s} variant="neutral" className="pl-2 pr-1 py-0.5 flex items-center gap-1">
                     {s}
@@ -338,8 +359,15 @@ export const ResourceFilters = React.memo(({
                     <button onClick={() => removeFilter('showUnlabeledOnly')} className="hover:bg-red-200 dark:hover:bg-red-800 rounded-full p-0.5"><X className="w-3 h-3"/></button>
                 </Badge>
             )}
+            {config.showViolationsOnly && (
+                <Badge variant="error" className="pl-2 pr-1 py-0.5 flex items-center gap-1 border-red-500 bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300">
+                    <ShieldAlert className="w-3 h-3 mr-1" />
+                    Policy Violations
+                    <button onClick={() => removeFilter('showViolationsOnly')} className="hover:bg-red-200 dark:hover:bg-red-800 rounded-full p-0.5"><X className="w-3 h-3"/></button>
+                </Badge>
+            )}
             <button 
-                onClick={() => onChange({ ...config, search: '', statuses: [], types: [], zones: [], machineTypes: [], hasPublicIp: null, dateStart: '', dateEnd: '', labels: [], showUnlabeledOnly: false })}
+                onClick={() => onChange({ ...config, search: '', statuses: [], types: [], zones: [], machineTypes: [], hasPublicIp: null, dateStart: '', dateEnd: '', labels: [], showUnlabeledOnly: false, showViolationsOnly: false, violatedPolicyId: undefined })}
                 className="text-[10px] text-slate-500 hover:text-red-500 underline decoration-dotted ml-1"
             >
                 Reset All Filters
@@ -351,8 +379,6 @@ export const ResourceFilters = React.memo(({
       {show && (
         <div className="px-6 py-6 border-t border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/80 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 animate-in slide-in-from-top-2 duration-300 relative">
            
-           {/* Resource Type Filter REMOVED (Moved to top) */}
-
            <div>
               <MultiSelect 
                  label="Status"
@@ -439,6 +465,11 @@ export const ResourceFilters = React.memo(({
                         onChange={(checked) => onChange({...config, showUnlabeledOnly: checked})}
                         label="Show Unlabeled Only"
                     />
+                    <ToggleSwitch 
+                        checked={!!config.showViolationsOnly} 
+                        onChange={(checked) => onChange({...config, showViolationsOnly: checked})}
+                        label="Show Policy Violations"
+                    />
                  </div>
                  <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1 bg-white dark:bg-slate-950 rounded-lg p-1 border border-slate-200 dark:border-slate-800">
@@ -471,41 +502,23 @@ export const ResourceFilters = React.memo(({
   );
 });
 
-// --- Bulk Action Bar ---
-export interface BulkActionBarProps {
-  count: number;
-  onOpenStudio: () => void;
-  onClear: () => void;
-}
-
-export const BulkActionBar: React.FC<BulkActionBarProps> = ({ count, onOpenStudio, onClear }) => {
+export const BulkActionBar = ({ count, onOpenStudio, onClear }: { count: number, onOpenStudio: () => void, onClear: () => void }) => {
   return (
     <AnimatePresence>
       {count > 0 && (
         <motion.div 
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -20 }}
-          className="absolute top-[88px] left-0 right-0 z-30 bg-indigo-600 text-white px-6 py-3 flex items-center justify-between shadow-lg backdrop-blur-md bg-indigo-600/95"
+          initial={{ y: 20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          exit={{ y: 20, opacity: 0 }}
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-4 py-2 rounded-full shadow-2xl flex items-center gap-4 z-50 border border-slate-700"
         >
-          <div className="flex items-center gap-4">
-             <div className="flex items-center gap-2 font-bold text-sm">
-                <span className="bg-white/20 px-2 py-0.5 rounded text-white tabular-nums">{count}</span>
-                <span>Selected</span>
-             </div>
-             <div className="h-4 w-px bg-indigo-400"></div>
-             <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={onOpenStudio} 
-                leftIcon={<Wand2 className="w-4 h-4" />}
-                className="text-white hover:bg-indigo-500 hover:text-white border border-white/20 hover:border-white/40"
-             >
-                AI Labeling Studio
-             </Button>
-          </div>
-          <button onClick={onClear} className="text-white/60 hover:text-white p-1 rounded-full hover:bg-white/10 transition-colors">
-             <X className="w-5 h-5" />
+          <span className="text-sm font-bold">{count} selected</span>
+          <div className="h-4 w-px bg-slate-700"></div>
+          <button onClick={onOpenStudio} className="text-xs hover:text-indigo-400 font-medium transition-colors flex items-center gap-1">
+             <SlidersHorizontal className="w-3 h-3" /> Label Studio
+          </button>
+          <button onClick={onClear} className="bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-full p-1 transition-colors ml-1">
+             <X className="w-3 h-3" />
           </button>
         </motion.div>
       )}
@@ -513,62 +526,57 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({ count, onOpenStudi
   );
 };
 
-// --- Pagination ---
-export interface PaginationControlProps {
-  currentPage: number;
-  totalPages: number;
-  itemsPerPage: number;
-  totalItems: number;
-  startIndex: number;
-  onPageChange: (page: number) => void;
-  onItemsPerPageChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
-}
-
-export const PaginationControl: React.FC<PaginationControlProps> = ({ 
-  currentPage, totalPages, itemsPerPage, totalItems, startIndex, 
-  onPageChange, onItemsPerPageChange 
+export const PaginationControl = ({ 
+    currentPage, totalPages, itemsPerPage, totalItems, startIndex, 
+    onPageChange, onItemsPerPageChange 
+}: {
+    currentPage: number, totalPages: number, itemsPerPage: number, totalItems: number, startIndex: number,
+    onPageChange: (p: number) => void, onItemsPerPageChange: (e: React.ChangeEvent<HTMLSelectElement>) => void
 }) => {
-  return (
-    <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 flex flex-col sm:flex-row items-center justify-between gap-4">
-       <div className="text-xs text-slate-500 dark:text-slate-400 order-2 sm:order-1">
-          Showing <span className="font-bold tabular-nums text-slate-700 dark:text-slate-200">{Math.min(startIndex + 1, totalItems)}</span> to <span className="font-bold tabular-nums text-slate-700 dark:text-slate-200">{Math.min(startIndex + itemsPerPage, totalItems)}</span> of <span className="font-bold tabular-nums text-slate-700 dark:text-slate-200">{totalItems}</span> results
-       </div>
-       
-       <div className="flex items-center gap-4 order-1 sm:order-2">
-          <div className="flex items-center gap-2">
-             <span className="text-[10px] uppercase font-bold text-slate-400 hidden sm:inline">Rows per page</span>
-             <select 
-               value={itemsPerPage}
-               onChange={onItemsPerPageChange}
-               className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 rounded px-2 py-1 outline-none focus:border-indigo-500 cursor-pointer"
-             >
-                <option value={10}>10</option>
-                <option value={20}>20</option>
-                <option value={50}>50</option>
-                <option value={100}>100</option>
-             </select>
-          </div>
-          
-          <div className="flex items-center gap-1 bg-white dark:bg-slate-800 rounded-lg p-1 border border-slate-200 dark:border-slate-700">
-             <button 
-                disabled={currentPage === 1}
-                onClick={() => onPageChange(currentPage - 1)}
-                className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
-             >
-                <ChevronLeft className="w-4 h-4 text-slate-600 dark:text-slate-300" />
-             </button>
-             <span className="text-xs font-mono px-2 text-slate-600 dark:text-slate-400 min-w-[3rem] text-center">
-                {currentPage} / {Math.max(1, totalPages)}
-             </span>
-             <button 
-                disabled={currentPage === totalPages || totalPages === 0}
-                onClick={() => onPageChange(currentPage + 1)}
-                className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
-             >
-                <ChevronRight className="w-4 h-4 text-slate-600 dark:text-slate-300" />
-             </button>
-          </div>
-       </div>
-    </div>
-  );
+    return (
+        <div className="flex flex-col sm:flex-row justify-between items-center gap-4 px-4 py-3 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm rounded-xl border border-slate-200 dark:border-slate-800">
+            <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                <span>Showing {Math.min(startIndex + 1, totalItems)} - {Math.min(startIndex + itemsPerPage, totalItems)} of {totalItems}</span>
+                <select 
+                    value={itemsPerPage} 
+                    onChange={onItemsPerPageChange}
+                    className="bg-transparent border border-slate-200 dark:border-slate-700 rounded px-1 py-0.5 ml-2 focus:ring-1 focus:ring-indigo-500 outline-none cursor-pointer"
+                >
+                    <option value={10}>10</option>
+                    <option value={20}>20</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                </select>
+                <span>per page</span>
+            </div>
+
+            <div className="flex gap-1 items-center">
+                <Button 
+                    size="xs" 
+                    variant="outline" 
+                    disabled={currentPage === 1} 
+                    onClick={() => onPageChange(currentPage - 1)}
+                    className="w-8 px-0"
+                >
+                    <ChevronLeft className="w-3 h-3" />
+                </Button>
+                
+                <div className="flex items-center gap-1 px-2">
+                    <span className="text-xs font-mono text-slate-600 dark:text-slate-400">
+                        Page {currentPage} of {totalPages}
+                    </span>
+                </div>
+
+                <Button 
+                    size="xs" 
+                    variant="outline" 
+                    disabled={currentPage === totalPages || totalPages === 0} 
+                    onClick={() => onPageChange(currentPage + 1)}
+                    className="w-8 px-0"
+                >
+                    <ChevronRight className="w-3 h-3" />
+                </Button>
+            </div>
+        </div>
+    );
 };

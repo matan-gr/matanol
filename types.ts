@@ -27,7 +27,8 @@ export interface LabelHistoryEntry {
   actor: string;
   previousLabels: Record<string, string>;
   newLabels: Record<string, string>;
-  changeType: 'UPDATE' | 'APPLY_PROPOSAL' | 'REVERT';
+  changeType: 'UPDATE' | 'APPLY_PROPOSAL' | 'REVERT' | 'BATCH_UPDATE';
+  reason?: string;
 }
 
 export interface ResourceDisk {
@@ -90,6 +91,7 @@ export interface GceResource {
   type: ResourceType;
   zone: string;
   machineType?: string;
+  cpuPlatform?: string;
   sizeGb?: string;
   status: string;
   creationTimestamp: string;
@@ -104,7 +106,10 @@ export interface GceResource {
   gpus?: { name: string; count: number }[];
   provisionedIops?: number;
   provisionedThroughput?: number;
+  
+  // Snapshots / Disks
   sourceDisk?: string;
+  resourcePolicies?: string[]; // For Auto-Snapshot policies
 
   // Cloud Run Specifics
   url?: string;

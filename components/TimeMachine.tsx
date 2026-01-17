@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { GceResource, TimelineEntry, DiffResult, ResourceSnapshot } from '../types';
 import { persistenceService } from '../services/persistenceService';
@@ -76,7 +75,9 @@ export const TimeMachine: React.FC<TimeMachineProps> = ({ currentResources, proj
     const snapshotEntry = timeline.find(t => t.date === selectedDate);
     if (!snapshotEntry) return [];
 
-    const snapshotMap = new Map(snapshotEntry.resources.map(r => [r.id, r]));
+    const snapshotMap = new Map<string, ResourceSnapshot>(
+      snapshotEntry.resources.map(r => [r.id, r])
+    );
     const currentMap = new Map(currentResources.map(r => [r.id, r]));
     
     const diffs: DiffResult[] = [];

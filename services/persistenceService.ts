@@ -7,7 +7,7 @@ import { restoreGovernanceContext, getPolicies, DEFAULT_TAXONOMY } from './polic
 const DB_NAME = 'CloudGov_Governance_DB';
 const HISTORY_STORE_NAME = 'audit_history';
 const GOV_STORE_NAME = 'governance_config';
-const DB_VERSION = 4; // Version bump for upgrades
+const DB_VERSION = 4;
 
 export interface HistoryRecord {
   projectId: string;
@@ -90,6 +90,12 @@ class PersistenceService {
     if (this.dbPromise) return this.dbPromise;
 
     this.dbPromise = new Promise((resolve, reject) => {
+      // Basic support check
+      if (typeof window === 'undefined' || !window.indexedDB) {
+          reject(new Error("IndexedDB not supported in this environment"));
+          return;
+      }
+
       const request = indexedDB.open(DB_NAME, DB_VERSION);
 
       request.onupgradeneeded = (event) => {
@@ -121,7 +127,8 @@ class PersistenceService {
   // --- HISTORY API ---
 
   async getProjectHistory(projectId: string): Promise<Record<string, LabelHistoryEntry[]>> {
-    // 1. Return memory cache if available
+    // 1. Return memory cache if available and fully populated
+    // Note: We blindly trust memory cache if populated to avoid unnecessary DB hits
     if (this.memoryHistoryCache.size > 0 && this.currentProjectId === projectId) {
        const map: Record<string, LabelHistoryEntry[]> = {};
        this.memoryHistoryCache.forEach((v, k) => map[k] = v);
@@ -152,6 +159,7 @@ class PersistenceService {
             request.onerror = () => reject(request.error);
         });
     } catch(e) {
+        console.error("Failed to read history from DB", e);
         return {};
     }
   }
@@ -161,8 +169,8 @@ class PersistenceService {
        this.memoryHistoryCache.set(resourceId, entries);
     }
 
-    // Local Save (Fire & Forget)
-    this.saveHistoryLocal(projectId, resourceId, entries);
+    // Local Save (Awaited for robustness)
+    await this.saveHistoryLocal(projectId, resourceId, entries);
 
     // Remote Sync (Debounced)
     if (this.isRemoteEnabled && projectId === this.currentProjectId) {
@@ -175,14 +183,23 @@ class PersistenceService {
        updates.forEach((v, k) => this.memoryHistoryCache.set(k, v));
     }
 
-    // Local Save
-    const db = await this.getDB();
-    const tx = db.transaction([HISTORY_STORE_NAME], 'readwrite');
-    const store = tx.objectStore(HISTORY_STORE_NAME);
-    
-    updates.forEach((entries, resourceId) => {
-        store.put({ projectId, resourceId, entries, lastModified: Date.now() });
-    });
+    // Local Save - Transactional
+    try {
+        const db = await this.getDB();
+        const tx = db.transaction([HISTORY_STORE_NAME], 'readwrite');
+        const store = tx.objectStore(HISTORY_STORE_NAME);
+        
+        updates.forEach((entries, resourceId) => {
+            store.put({ projectId, resourceId, entries, lastModified: Date.now() });
+        });
+
+        await new Promise<void>((resolve, reject) => {
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+    } catch (e) {
+        console.error("Bulk history save failed", e);
+    }
 
     // Remote Sync
     if (this.isRemoteEnabled && projectId === this.currentProjectId) {
@@ -190,10 +207,20 @@ class PersistenceService {
     }
   }
 
-  private async saveHistoryLocal(projectId: string, resourceId: string, entries: LabelHistoryEntry[]) {
-      const db = await this.getDB();
-      const tx = db.transaction([HISTORY_STORE_NAME], 'readwrite');
-      tx.objectStore(HISTORY_STORE_NAME).put({ projectId, resourceId, entries, lastModified: Date.now() });
+  private async saveHistoryLocal(projectId: string, resourceId: string, entries: LabelHistoryEntry[]): Promise<void> {
+      try {
+          const db = await this.getDB();
+          const tx = db.transaction([HISTORY_STORE_NAME], 'readwrite');
+          const store = tx.objectStore(HISTORY_STORE_NAME);
+          store.put({ projectId, resourceId, entries, lastModified: Date.now() });
+          
+          return new Promise((resolve, reject) => {
+              tx.oncomplete = () => resolve();
+              tx.onerror = () => reject(tx.error);
+          });
+      } catch (e) {
+          console.error("Local history save error", e);
+      }
   }
 
   // --- GOVERNANCE API ---
@@ -207,19 +234,25 @@ class PersistenceService {
       // Local DB
       try {
           const db = await this.getDB();
-          const record = await new Promise<GovernanceRecord>((resolve) => {
-              const req = db.transaction([GOV_STORE_NAME], 'readonly').objectStore(GOV_STORE_NAME).get(projectId);
-              req.onsuccess = () => resolve(req.result);
-              req.onerror = () => resolve(null as any);
+          return new Promise<GovernanceRecord | null>((resolve, reject) => {
+              const tx = db.transaction([GOV_STORE_NAME], 'readonly');
+              const req = tx.objectStore(GOV_STORE_NAME).get(projectId);
+              
+              req.onsuccess = () => {
+                  const record = req.result as GovernanceRecord;
+                  if (record) {
+                      if (projectId === this.currentProjectId) this.memoryGovCache = record;
+                      resolve(record);
+                  } else {
+                      resolve(null);
+                  }
+              };
+              req.onerror = () => resolve(null);
           });
-          
-          if (record) {
-              if (projectId === this.currentProjectId) this.memoryGovCache = record;
-              return record;
-          }
-      } catch (e) { /* ignore */ }
-
-      return null;
+      } catch (e) {
+          console.error("Failed to get governance", e);
+          return null;
+      }
   }
 
   async saveGovernance(projectId: string, data: Partial<GovernanceRecord>): Promise<void> {
@@ -228,14 +261,15 @@ class PersistenceService {
           taxonomy: DEFAULT_TAXONOMY, 
           policies: getPolicies(DEFAULT_TAXONOMY),
           savedViews: [], 
-          settings: {} 
+          settings: {},
+          lastModified: Date.now()
       } as GovernanceRecord;
 
       const updated: GovernanceRecord = {
           ...current,
           ...data,
           policies: data.policies ? data.policies.map(p => {
-              // Strip functions before storage
+              // Strip functions before storage to make it structured-cloneable
               const { check, ...rest } = p; 
               return rest as GovernancePolicy;
           }) : current.policies,
@@ -246,10 +280,19 @@ class PersistenceService {
           this.memoryGovCache = updated;
       }
 
-      // Local Save
-      const db = await this.getDB();
-      const tx = db.transaction([GOV_STORE_NAME], 'readwrite');
-      tx.objectStore(GOV_STORE_NAME).put(updated);
+      // Local Save - Transactional
+      try {
+          const db = await this.getDB();
+          const tx = db.transaction([GOV_STORE_NAME], 'readwrite');
+          tx.objectStore(GOV_STORE_NAME).put(updated);
+          
+          await new Promise<void>((resolve, reject) => {
+              tx.oncomplete = () => resolve();
+              tx.onerror = () => reject(tx.error);
+          });
+      } catch (e) {
+          console.error("Governance local save failed", e);
+      }
 
       // Remote Sync
       if (this.isRemoteEnabled && projectId === this.currentProjectId) {
@@ -280,47 +323,45 @@ class PersistenceService {
   async saveInventorySnapshot(projectId: string, resources: GceResource[]): Promise<void> {
       if (!this.isRemoteEnabled) return;
 
-      const today = new Date().toISOString().split('T')[0];
-      let timeline = await this.getTimeline(projectId);
-      
-      // Filter out existing snapshot for today to update it
-      timeline = timeline.filter(t => t.date !== today);
-
-      // Compact Snapshot
-      const snapshot: ResourceSnapshot[] = resources.map(r => ({
-          id: r.id,
-          name: r.name,
-          type: r.type,
-          status: r.status,
-          zone: r.zone,
-          labelHash: JSON.stringify(r.labels), 
-          meta: {
-              machineType: r.machineType,
-              sizeGb: r.sizeGb
-          }
-      }));
-
-      const newEntry: TimelineEntry = {
-          date: today,
-          timestamp: Date.now(),
-          resources: snapshot
-      };
-
-      // Keep last 90 days
-      const updatedTimeline = [newEntry, ...timeline]
-          .sort((a,b) => b.timestamp - a.timestamp)
-          .slice(0, 90);
-      
-      this.memoryTimelineCache = updatedTimeline;
-
-      // Compress and Upload with Optimistic Locking
-      const blob = await compressData(updatedTimeline);
-      const filename = 'timeline.json';
-      const generation = this.meta[filename]?.generation;
-
       try {
-          // We try to save. If generation mismatch, we should fetch latest, merge, and retry.
-          // For timeline, simple overwrite/latest wins is usually acceptable as it's append-only per day.
+          const today = new Date().toISOString().split('T')[0];
+          let timeline = await this.getTimeline(projectId);
+          
+          // Filter out existing snapshot for today to update it
+          timeline = timeline.filter(t => t.date !== today);
+
+          // Compact Snapshot
+          const snapshot: ResourceSnapshot[] = resources.map(r => ({
+              id: r.id,
+              name: r.name,
+              type: r.type,
+              status: r.status,
+              zone: r.zone,
+              labelHash: JSON.stringify(r.labels), 
+              meta: {
+                  machineType: r.machineType,
+                  sizeGb: r.sizeGb
+              }
+          }));
+
+          const newEntry: TimelineEntry = {
+              date: today,
+              timestamp: Date.now(),
+              resources: snapshot
+          };
+
+          // Keep last 90 days
+          const updatedTimeline = [newEntry, ...timeline]
+              .sort((a,b) => b.timestamp - a.timestamp)
+              .slice(0, 90);
+          
+          this.memoryTimelineCache = updatedTimeline;
+
+          // Compress and Upload with Optimistic Locking
+          const blob = await compressData(updatedTimeline);
+          const filename = 'timeline.json';
+          const generation = this.meta[filename]?.generation;
+
           const newGen = await saveFileToGcs(projectId, this.currentToken, filename, blob, generation);
           if (newGen) {
               this.meta[filename] = { generation: newGen, lastSynced: Date.now() };
@@ -333,9 +374,42 @@ class PersistenceService {
   // --- SYNC ENGINE (COMPRESSED & ROBUST) ---
 
   private historyDebounce: any;
+  private govDebounce: any;
+
+  /**
+   * Forces any pending cloud syncs to execute immediately.
+   * Useful after critical batch operations or before unload.
+   */
+  async forceSync(projectId: string) {
+      if (!this.isRemoteEnabled || this.currentProjectId !== projectId) return;
+
+      const promises = [];
+
+      if (this.historyDebounce) {
+          clearTimeout(this.historyDebounce);
+          this.historyDebounce = null;
+          promises.push(this.performHistorySync());
+      }
+
+      if (this.govDebounce) {
+          clearTimeout(this.govDebounce);
+          this.govDebounce = null;
+          if (this.memoryGovCache) {
+              promises.push(this.performGovSync(this.memoryGovCache));
+          }
+      }
+
+      if (promises.length > 0) {
+          await Promise.allSettled(promises);
+      }
+  }
+
   private triggerHistorySync() {
      if (this.historyDebounce) clearTimeout(this.historyDebounce);
-     this.historyDebounce = setTimeout(() => this.performHistorySync(), 3000);
+     this.historyDebounce = setTimeout(() => {
+         this.historyDebounce = null;
+         this.performHistorySync();
+     }, 3000);
   }
 
   private async performHistorySync() {
@@ -345,20 +419,19 @@ class PersistenceService {
       // 1. Prepare Data
       const fullHistory: Record<string, LabelHistoryEntry[]> = {};
       this.memoryHistoryCache.forEach((v, k) => fullHistory[k] = v);
-      const payload = { lastUpdated: new Date().toISOString(), history: fullHistory };
-      const blob = await compressData(payload);
-
-      // 2. Upload with Retry logic
+      
       try {
+          const payload = { lastUpdated: new Date().toISOString(), history: fullHistory };
+          const blob = await compressData(payload);
+
+          // 2. Upload with Retry logic
           const currentGen = this.meta[filename]?.generation;
           const newGen = await saveFileToGcs(this.currentProjectId, this.currentToken, filename, blob, currentGen);
           if (newGen) {
               this.meta[filename] = { generation: newGen, lastSynced: Date.now() };
           } else {
-              // Null usually means conflict (if logic in saveFile matches)
-              // If conflict, we fetch remote, merge, and retry once
-              await this.syncHistoryFromCloud(this.currentProjectId); // Re-fetch and merge
-              // We don't immediately retry upload to avoid loops, next edit will trigger sync
+              // Conflict: fetch remote, merge, and retry once
+              await this.syncHistoryFromCloud(this.currentProjectId); 
           }
       } catch (e) {
           console.error("History sync failed", e);
@@ -375,45 +448,50 @@ class PersistenceService {
 
       const data = await decompressData<any>(res.blob);
       if (data && data.history) {
-          // Merge Logic: Local memory is master for current session, but we merge missing keys/entries
           Object.entries(data.history).forEach(([resId, entries]) => {
               const local = this.memoryHistoryCache.get(resId) || [];
               const remote = entries as LabelHistoryEntry[];
               
-              // Simple merge: Combine unique by timestamp+actor
+              // Merge Logic: Local is usually ahead in current session, but merge missing remote entries
               const combined = [...local];
               remote.forEach(r => {
-                  if (!local.some(l => l.timestamp === r.timestamp && l.actor === r.actor)) {
+                  // Dedup by timestamp + actor
+                  if (!local.some(l => new Date(l.timestamp).getTime() === new Date(r.timestamp).getTime() && l.actor === r.actor)) {
                       combined.push(r);
                   }
               });
               
               combined.sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
               this.memoryHistoryCache.set(resId, combined);
+              
+              // Also update local DB with the merged view for offline support
+              this.saveHistoryLocal(projectId, resId, combined);
           });
           
           this.meta[filename] = { generation: res.generation, lastSynced: Date.now() };
       }
   }
 
-  private govDebounce: any;
   private triggerGovernanceSync(record: GovernanceRecord) {
       if (this.govDebounce) clearTimeout(this.govDebounce);
-      this.govDebounce = setTimeout(() => this.performGovSync(record), 2000);
+      this.govDebounce = setTimeout(() => {
+          this.govDebounce = null;
+          this.performGovSync(record);
+      }, 2000);
   }
 
   private async performGovSync(record: GovernanceRecord) {
       const filename = 'governance.json';
-      const blob = await compressData(record);
-      const generation = this.meta[filename]?.generation;
-
       try {
+          const blob = await compressData(record);
+          const generation = this.meta[filename]?.generation;
+
           const newGen = await saveFileToGcs(this.currentProjectId, this.currentToken, filename, blob, generation);
           if (newGen) {
               this.meta[filename] = { generation: newGen, lastSynced: Date.now() };
           }
       } catch (e) {
-          console.warn("Governance sync conflict, fetching latest...");
+          console.warn("Governance sync conflict, fetching latest...", e);
           await this.syncGovernanceFromCloud(this.currentProjectId);
       }
   }
@@ -425,12 +503,13 @@ class PersistenceService {
 
       const remoteGov = await decompressData<GovernanceRecord>(res.blob);
       if (remoteGov) {
-          // Check timestamp to see if remote is newer
+          // Conflict Resolution: Last Write Wins based on timestamp
           if (!this.memoryGovCache || remoteGov.lastModified > this.memoryGovCache.lastModified) {
               this.memoryGovCache = remoteGov;
-              // Update local DB too
+              // Persist merged/latest to local DB
               const db = await this.getDB();
-              db.transaction([GOV_STORE_NAME], 'readwrite').objectStore(GOV_STORE_NAME).put(remoteGov);
+              const tx = db.transaction([GOV_STORE_NAME], 'readwrite');
+              tx.objectStore(GOV_STORE_NAME).put(remoteGov);
           }
           this.meta[filename] = { generation: res.generation, lastSynced: Date.now() };
       }

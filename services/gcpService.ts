@@ -31,7 +31,6 @@ const safeLog = (message: string, error: any) => {
 };
 
 // Simple concurrency limiter to prevent 429 Quota Exceeded
-// Increased concurrency for better throughput on HTTP/2 enabled connections
 class RateLimiter {
   private queue: (() => Promise<any>)[] = [];
   private active = 0;
@@ -80,13 +79,14 @@ const parseGcpError = async (response: Response): Promise<string> => {
     if (errorData?.error) {
       const code = errorData.error.code || response.status;
       const mainMsg = errorData.error.message;
+      const details = errorData.error.details?.[0]?.reason || '';
       
       if (code === 403) return `Access Denied: ${mainMsg}`;
       if (code === 401) return `Session Expired`;
       if (code === 429) return `Rate Limit Exceeded`;
-      if (code === 412) return `Precondition Failed`;
+      if (code === 412) return `Conflict: Resource modified by another process`;
       
-      return mainMsg || response.statusText;
+      return `${mainMsg} ${details}`.trim() || response.statusText;
     }
     return `${response.status} ${response.statusText}`;
   } catch (e) {
@@ -103,13 +103,11 @@ export const fetchWithBackoff = async (
   try {
     const response = await fetch(url, options);
 
-    // Retry on 429 (Rate Limit) or 5xx (Server Error)
     if (!response.ok && (response.status === 429 || response.status >= 500)) {
       if (retries > 0) {
-        // Jitter the backoff to prevent thundering herd
         const jitter = Math.random() * 200;
         await new Promise(resolve => setTimeout(resolve, backoff + jitter));
-        return fetchWithBackoff(url, options, retries - 1, backoff * 1.5); // Smoother exp backoff
+        return fetchWithBackoff(url, options, retries - 1, backoff * 1.5);
       }
     }
     return response;
@@ -119,17 +117,16 @@ export const fetchWithBackoff = async (
       await new Promise(resolve => setTimeout(resolve, backoff + jitter));
       return fetchWithBackoff(url, options, retries - 1, backoff * 1.5);
     }
-    throw error;
+    throw new Error(`Network Request Failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 };
 
 // --- API Implementation ---
 
-// Generic fetcher that handles pagination automatically
 const fetchPagedResource = async <T>(
   urlFactory: (pageToken?: string) => string,
   accessToken: string,
-  itemsKey: string, // e.g. 'items' or 'services'
+  itemsKey: string, 
   mapper: (item: any) => T,
   method = 'GET'
 ): Promise<T[]> => {
@@ -168,6 +165,7 @@ const fetchPagedResource = async <T>(
     } while (nextPageToken);
   } catch (error: any) {
     if (error.message === '401') throw error;
+    console.warn("Paged fetch interrupted:", error);
   }
   return resources;
 };
@@ -204,6 +202,7 @@ const fetchComputeEngine = async (projectId: string, accessToken: string) => {
               type: 'INSTANCE',
               zone: zone,
               machineType: machineTypeShort,
+              cpuPlatform: inst.cpuPlatform,
               status: inst.status || 'UNKNOWN',
               creationTimestamp: inst.creationTimestamp,
               provisioningModel: inst.scheduling?.provisioningModel === 'SPOT' ? 'SPOT' : 'STANDARD',
@@ -237,7 +236,8 @@ const fetchComputeEngine = async (projectId: string, accessToken: string) => {
 };
 
 const fetchDisks = async (projectId: string, accessToken: string) => {
-  const fields = `items/*/disks(id,name,description,sizeGb,type,status,creationTimestamp,labels,labelFingerprint,provisionedIops,provisionedThroughput),nextPageToken`;
+  // Added resourcePolicies to fetch list
+  const fields = `items/*/disks(id,name,description,sizeGb,type,status,creationTimestamp,labels,labelFingerprint,provisionedIops,provisionedThroughput,resourcePolicies),nextPageToken`;
   const url = `${BASE_URL}/${projectId}/aggregated/disks?maxResults=500&fields=${encodeURIComponent(fields)}`;
   
   const response = await apiLimiter.add(() => fetchWithBackoff(url, { headers: { Authorization: `Bearer ${accessToken}` } }));
@@ -257,12 +257,13 @@ const fetchDisks = async (projectId: string, accessToken: string) => {
               type: 'DISK',
               zone,
               sizeGb: disk.sizeGb,
-              machineType: disk.type?.split('/').pop(),
+              machineType: disk.type?.split('/').pop(), // e.g. pd-ssd
               status: disk.status || 'READY',
               creationTimestamp: disk.creationTimestamp,
               provisioningModel: 'STANDARD',
               provisionedIops: disk.provisionedIops,
               provisionedThroughput: disk.provisionedThroughput,
+              resourcePolicies: disk.resourcePolicies?.map((rp: string) => rp.split('/').pop()), // Extract policy names
               labels: disk.labels || {},
               labelFingerprint: disk.labelFingerprint,
               history: []
@@ -272,6 +273,29 @@ const fetchDisks = async (projectId: string, accessToken: string) => {
     });
   }
   return resources;
+};
+
+// New Snapshot Fetcher
+const fetchSnapshots = async (projectId: string, accessToken: string) => {
+  return fetchPagedResource(
+    (pageToken) => `${BASE_URL}/${projectId}/global/snapshots?maxResults=500${pageToken ? `&pageToken=${pageToken}` : ''}`,
+    accessToken, 'items',
+    (snap: any) => ({
+      id: String(snap.id),
+      name: snap.name,
+      description: snap.description,
+      type: 'SNAPSHOT' as ResourceType,
+      zone: 'global',
+      sizeGb: snap.diskSizeGb,
+      status: snap.status,
+      creationTimestamp: snap.creationTimestamp,
+      provisioningModel: 'STANDARD' as ProvisioningModel,
+      sourceDisk: snap.sourceDisk?.split('/').pop(), // Extract disk name
+      labels: snap.labels || {},
+      labelFingerprint: snap.labelFingerprint,
+      history: []
+    })
+  );
 };
 
 export const fetchAllResources = async (
@@ -287,6 +311,10 @@ export const fetchAllResources = async (
     {
       name: 'Persistent Disks',
       fn: () => fetchDisks(projectId, accessToken)
+    },
+    {
+      name: 'Snapshots',
+      fn: () => fetchSnapshots(projectId, accessToken)
     },
     {
       name: 'Cloud Run Services',
@@ -316,7 +344,7 @@ export const fetchAllResources = async (
                 memory: limits?.memory,
                 ingress: ingress,
                 labels: svc.labels || {},
-                labelFingerprint: svc.etag,
+                labelFingerprint: svc.etag, // Correct ETag mapping
                 history: []
             };
         }
@@ -374,7 +402,12 @@ export const fetchAllResources = async (
                 creationTimestamp: inst.createTime || new Date().toISOString(),
                 provisioningModel: 'STANDARD' as ProvisioningModel,
                 labels: inst.settings?.userLabels || {},
-                labelFingerprint: inst.etag,
+                labelFingerprint: inst.etag, // Correct ETag mapping
+                ips: inst.ipAddresses?.map((ip: any) => ({
+                    network: 'Cloud SQL',
+                    internal: ip.type === 'PRIVATE' ? ip.ipAddress : undefined,
+                    external: ip.type === 'PRIMARY' ? ip.ipAddress : undefined
+                })).filter((i: any) => i.internal || i.external) || [],
                 history: []
             })
         )
@@ -430,6 +463,8 @@ export const fetchResource = async (projectId: string, accessToken: string, reso
     url = `${BASE_URL}/${projectId}/zones/${resource.zone}/instances/${resource.name}`;
   } else if (resource.type === 'DISK') {
     url = `${BASE_URL}/${projectId}/zones/${resource.zone}/disks/${resource.name}`;
+  } else if (resource.type === 'SNAPSHOT') {
+    url = `${BASE_URL}/${projectId}/global/snapshots/${resource.name}`;
   } else if (resource.type === 'BUCKET') {
     url = `${STORAGE_BASE_URL}/${resource.name}`;
   } else if (resource.type === 'CLOUD_RUN') {
@@ -483,11 +518,13 @@ export const updateResourceLabels = async (
   } else if (resource.type === 'CLOUD_RUN') {
     url = `https://run.googleapis.com/v2/projects/${projectId}/locations/${resource.zone}/services/${resource.name}?updateMask=labels`;
     method = 'PATCH';
-    body = { labels: newLabels }; 
+    // Cloud Run v2 requires strict ETag in body for concurrency control
+    body = { labels: newLabels, etag: resource.labelFingerprint }; 
   } else if (resource.type === 'CLOUD_SQL') {
     url = `${SQL_ADMIN_URL}/${projectId}/instances/${resource.name}`;
     method = 'PATCH';
-    body = { settings: { userLabels: newLabels } };
+    // Cloud SQL patch also benefits from ETag for safety
+    body = { settings: { userLabels: newLabels }, etag: resource.labelFingerprint };
   } else if (resource.type === 'BUCKET') {
     url = `${STORAGE_BASE_URL}/${resource.name}`;
     method = 'PATCH';

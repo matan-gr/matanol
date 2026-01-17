@@ -85,7 +85,7 @@ export const useResourceManager = (
   }, [governedResources]);
 
   // --- Helper to save state ---
-  const persistState = useCallback((
+  const persistState = useCallback(async (
       override?: { 
           taxonomy?: TaxonomyRule[], 
           policies?: GovernancePolicy[],
@@ -94,12 +94,14 @@ export const useResourceManager = (
       }
   ) => {
       if (currentCredentials.current && currentCredentials.current.accessToken !== 'demo-mode') {
-          persistenceService.saveGovernance(currentCredentials.current.projectId, {
+          await persistenceService.saveGovernance(currentCredentials.current.projectId, {
               taxonomy: override?.taxonomy || taxonomy,
               policies: override?.policies || activePolicies,
               savedViews: override?.savedViews || savedViews,
               settings: override?.settings || appSettings
           });
+          // Force immediate flush for config changes
+          await persistenceService.forceSync(currentCredentials.current.projectId);
       }
   }, [taxonomy, activePolicies, savedViews, appSettings]);
 
@@ -217,20 +219,20 @@ export const useResourceManager = (
     return true;
   }, []);
 
-  const updateGovernance = useCallback((newTaxonomy: TaxonomyRule[], newPolicies: GovernancePolicy[]) => {
+  const updateGovernance = useCallback(async (newTaxonomy: TaxonomyRule[], newPolicies: GovernancePolicy[]) => {
       setTaxonomy(newTaxonomy);
       setActivePolicies(newPolicies);
-      persistState({ taxonomy: newTaxonomy, policies: newPolicies });
+      await persistState({ taxonomy: newTaxonomy, policies: newPolicies });
   }, [persistState]);
 
-  const updateSavedViews = useCallback((newViews: SavedView[]) => {
+  const updateSavedViews = useCallback(async (newViews: SavedView[]) => {
       setSavedViews(newViews);
-      persistState({ savedViews: newViews });
+      await persistState({ savedViews: newViews });
   }, [persistState]);
 
-  const updateSettings = useCallback((newSettings: AppSettings) => {
+  const updateSettings = useCallback(async (newSettings: AppSettings) => {
       setAppSettings(newSettings);
-      persistState({ settings: newSettings });
+      await persistState({ settings: newSettings });
   }, [persistState]);
 
   const analyzeResources = useCallback(async () => {
@@ -346,7 +348,8 @@ export const useResourceManager = (
       }));
 
       if (credentials.accessToken !== 'demo-mode') {
-          persistenceService.saveHistory(credentials.projectId, resourceId, updatedHistory);
+          // Await strict persistence
+          await persistenceService.saveHistory(credentials.projectId, resourceId, updatedHistory);
       }
 
       addNotification(`Updated ${resource.name}`, 'success');
@@ -359,11 +362,11 @@ export const useResourceManager = (
   /**
    * Optimized Bulk Update with Sliding Window Concurrency
    * Maintains atomicity: If ANY update fails, ALL successful updates are rolled back.
-   * Does NOT wait for full batch to complete before starting next item (unlike previous iteration).
    */
   const bulkUpdateLabels = useCallback(async (
     credentials: GcpCredentials,
-    updates: Map<string, Record<string, string>>
+    updates: Map<string, Record<string, string>>,
+    changeReason?: string
   ) => {
      const idsToUpdate = Array.from(updates.keys());
      const count = idsToUpdate.length;
@@ -384,9 +387,6 @@ export const useResourceManager = (
      let errorOccurred: Error | null = null;
      let processedCount = 0;
 
-     // Use a high concurrency limit for updates since we are doing write operations
-     // The global RateLimiter in gcpService will ensure we don't hit 429s, but we want
-     // to keep the pipe full.
      const limit = createSlidingWindow(10); 
 
      const promises = idsToUpdate.map(id => {
@@ -402,19 +402,19 @@ export const useResourceManager = (
                  if (credentials.accessToken !== 'demo-mode') {
                      await updateResourceLabelsApi(credentials.projectId, credentials.accessToken, res, labels);
                  } else {
-                     await new Promise(r => setTimeout(r, 50)); // Fast demo simulation
+                     await new Promise(r => setTimeout(r, 50)); 
                  }
                  
                  successfulUpdates.push(id);
                  processedCount++;
-                 // Throttle state updates to every few items to avoid render thrashing
+                 
                  if (processedCount % 3 === 0 || processedCount === count) {
                     setBatchProgress({ processed: processedCount, total: count, status: 'updating' });
                  }
                  
                  return { id, status: 'fulfilled' };
              } catch (e: any) {
-                 errorOccurred = e; // Signal abort
+                 errorOccurred = e; 
                  return { id, status: 'rejected', reason: e };
              }
          });
@@ -427,7 +427,6 @@ export const useResourceManager = (
          setBatchProgress({ processed: 0, total: successfulUpdates.length, status: 'rolling-back' }); 
 
          // --- ATOMIC ROLLBACK PHASE ---
-         // For rollback, we use a slightly lower concurrency to ensure reliability
          const rollbackLimit = createSlidingWindow(5);
          let rollbackCount = 0;
 
@@ -439,7 +438,6 @@ export const useResourceManager = (
                  if (res && originalLabels) {
                      try {
                          if (credentials.accessToken !== 'demo-mode') {
-                             // Fetch fresh fingerprint to avoid 412 Precondition Failed during rollback
                              const freshResource = await fetchResource(credentials.projectId, credentials.accessToken, res);
                              if (freshResource) {
                                  await updateResourceLabelsApi(credentials.projectId, credentials.accessToken, freshResource, originalLabels);
@@ -479,7 +477,8 @@ export const useResourceManager = (
                  const historyEntry: LabelHistoryEntry = {
                      timestamp: new Date(),
                      actor: 'User (Batch)',
-                     changeType: 'UPDATE',
+                     changeType: 'BATCH_UPDATE',
+                     reason: changeReason || 'Bulk Operation',
                      previousLabels: originalStates.get(r.id) || {},
                      newLabels: newLabels
                  };
@@ -498,7 +497,10 @@ export const useResourceManager = (
          }));
          
          if (credentials.accessToken !== 'demo-mode') {
-             persistenceService.bulkSaveHistory(credentials.projectId, updatesToPersist);
+             // Await strict bulk persistence
+             await persistenceService.bulkSaveHistory(credentials.projectId, updatesToPersist);
+             // FORCE SYNC TO CLOUD IMMEDIATELY
+             await persistenceService.forceSync(credentials.projectId); 
          }
 
          addNotification(`Transaction successful. Updated ${count} resources.`, 'success');

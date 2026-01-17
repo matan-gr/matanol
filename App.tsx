@@ -1,27 +1,30 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import { GcpCredentials, FilterConfig, SavedView, QuotaEntry } from './types';
 import { Layout } from './components/Layout';
 import { ResourceTable } from './components/ResourceTable';
-import { LogViewer } from './components/LogViewer';
 import { Dashboard } from './components/Dashboard';
-import { TopologyMap } from './components/TopologyMap';
 import { LoginScreen } from './components/LoginScreen';
 import { CommandPalette } from './components/CommandPalette';
 import { PolicyManager } from './components/PolicyManager';
 import { ComplianceReportModal } from './components/ComplianceReportModal';
 import { GlobalContextMenu } from './components/GlobalContextMenu';
 import { SettingsPage } from './components/SettingsPage'; 
-import { TimeMachine } from './components/TimeMachine';
 import { useNotifications } from './hooks/useNotifications';
 import { useResourceManager } from './hooks/useResourceManager';
 import { useLogs } from './hooks/useLogs';
-import { Button, Input, Card, SectionHeader } from './components/DesignSystem';
-import { Moon, Sun, Network, RefreshCw, ShieldCheck, FileText, Loader2, Sparkles, History } from 'lucide-react';
+import { Button } from './components/DesignSystem';
+import { SectionHeader } from './components/DesignSystem';
+import { RefreshCw, ShieldCheck, Sparkles, Loader2 } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { QuotaVisuals } from './components/QuotaVisuals';
 import { fetchQuotas } from './services/gcpService';
+
+// --- Lazy Loading Heavy Components ---
+const TopologyMap = React.lazy(() => import('./components/TopologyMap').then(module => ({ default: module.TopologyMap })));
+const LogViewer = React.lazy(() => import('./components/LogViewer').then(module => ({ default: module.LogViewer })));
+const TimeMachine = React.lazy(() => import('./components/TimeMachine').then(module => ({ default: module.TimeMachine })));
 
 const MotionDiv = motion.div as any;
 
@@ -53,6 +56,13 @@ const PageTransition: React.FC<{ children: React.ReactNode }> = ({ children }) =
   </MotionDiv>
 );
 
+const PageLoader = () => (
+  <div className="h-full w-full flex flex-col items-center justify-center text-slate-400">
+    <Loader2 className="w-10 h-10 animate-spin mb-4 text-indigo-500" />
+    <span className="text-sm font-medium animate-pulse">Loading Module...</span>
+  </div>
+);
+
 export const App = () => {
   const [credentials, setCredentials] = useState<GcpCredentials | null>(null);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -80,12 +90,10 @@ export const App = () => {
     isAnalysing, 
     savedViews,
     appSettings,
-    // AI Consultant Props
     dashboardInsight,
     isGeneratingDashboardInsight,
     generateDashboardInsight,
     clearDashboardInsight,
-    // ---
     connectProject, 
     loadDemoData, 
     analyzeResources, 
@@ -164,7 +172,6 @@ export const App = () => {
   };
 
   const handleConnect = async (creds: GcpCredentials) => {
-    // Save Project ID locally for convenience
     localStorage.setItem('lastProjectId', creds.projectId);
     
     const success = await connectProject(creds);
@@ -207,7 +214,6 @@ export const App = () => {
       config: filterConfig,
       createdAt: Date.now()
     };
-    // Update and persist via hook
     updateSavedViews([...savedViews, newView]);
     addNotification(`View "${name}" saved.`, 'success');
   };
@@ -356,7 +362,9 @@ export const App = () => {
             <PageTransition key="timemachine">
                 <div className="h-[calc(100vh-140px)] min-h-[600px] flex flex-col">
                     <SectionHeader title="Time Machine" subtitle="Compare infrastructure state against historical snapshots." />
-                    <TimeMachine currentResources={resources} projectId={credentials.projectId} />
+                    <Suspense fallback={<PageLoader />}>
+                        <TimeMachine currentResources={resources} projectId={credentials.projectId} />
+                    </Suspense>
                 </div>
             </PageTransition>
           )}
@@ -365,7 +373,9 @@ export const App = () => {
             <PageTransition key="topology">
                 <div className="h-[calc(100vh-140px)] min-h-[600px] flex flex-col">
                     <SectionHeader title="Network Topology" subtitle="Visualize resource relationships and connectivity." />
-                    <TopologyMap resources={resources} />
+                    <Suspense fallback={<PageLoader />}>
+                        <TopologyMap resources={resources} />
+                    </Suspense>
                 </div>
             </PageTransition>
           )}
@@ -414,11 +424,13 @@ export const App = () => {
             <PageTransition key="logs">
                 <div className="h-[calc(100vh-140px)] min-h-[600px] flex flex-col">
                     <SectionHeader title="Audit Logs" subtitle="Trace administrative actions and API calls." />
-                    <LogViewer 
-                        logs={logs} 
-                        onRefresh={() => refreshGcpLogs(credentials)} 
-                        isLoading={isLoadingLogs} 
-                    />
+                    <Suspense fallback={<PageLoader />}>
+                        <LogViewer 
+                            logs={logs} 
+                            onRefresh={() => refreshGcpLogs(credentials)} 
+                            isLoading={isLoadingLogs} 
+                        />
+                    </Suspense>
                 </div>
             </PageTransition>
           )}
